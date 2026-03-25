@@ -1,10 +1,12 @@
 use std::fs::OpenOptions;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
 
 use memmap2::{MmapMut, MmapOptions};
 
-use aura_common::{AuraResult, TelemetryArchive, DATA_OFFSET, SHM_SIZE};
+use aura_common::{AuraResult, TelemetryArchive, DATA_OFFSET, SHM_FILE_MODE, SHM_SIZE};
 
 pub struct ShmHandle {
     mmap: MmapMut,
@@ -16,12 +18,16 @@ impl ShmHandle {
             std::fs::create_dir_all(parent)?;
         }
 
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let mut opts = OpenOptions::new();
+        opts.read(true).write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        opts.mode(SHM_FILE_MODE);
+        let file = opts.open(path)?;
+
+        #[cfg(unix)]
+        {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(SHM_FILE_MODE))?;
+        }
 
         file.set_len(SHM_SIZE as u64)?;
 

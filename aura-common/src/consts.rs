@@ -7,6 +7,9 @@ pub const SHM_PATH: &str = "/tmp/aura_state.dat";
 /// Shared memory file size (64KB - must be page-aligned)
 pub const SHM_SIZE: usize = 65536;
 
+/// SHM file permissions: world-readable/writable for cross-user IPC
+pub const SHM_FILE_MODE: u32 = 0o666;
+
 /// SeqLock version offset in mmap (first 8 bytes)
 pub const VERSION_OFFSET: usize = 0;
 

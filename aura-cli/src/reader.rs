@@ -5,7 +5,7 @@ use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use aura_common::{
-    AuraError, AuraResult, TelemetryArchive, DATA_OFFSET, MAX_SPIN_WAIT_MS, SHM_SIZE,
+    AuraError, AuraResult, TelemetryArchive, DATA_OFFSET, MAX_SPIN_WAIT_MS, SHM_FILE_MODE, SHM_SIZE,
 };
 use memmap2::{Mmap, MmapOptions};
 
@@ -16,7 +16,16 @@ pub struct TelemetryReader {
 
 impl TelemetryReader {
     pub fn new(path: &Path) -> AuraResult<Self> {
-        let file = OpenOptions::new().read(true).open(path)?;
+        let file = OpenOptions::new().read(true).open(path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                AuraError::MmapFailed(format!(
+                    "Permission denied reading {}: check file permissions (expected 0o{SHM_FILE_MODE:o})",
+                    path.display()
+                ))
+            } else {
+                AuraError::SharedMemory(e)
+            }
+        })?;
         let mmap = unsafe {
             MmapOptions::new()
                 .len(SHM_SIZE)
