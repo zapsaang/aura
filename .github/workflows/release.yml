@@ -235,7 +235,7 @@ jobs:
               end
 
               test do
-                assert_match "aura", shell_output("#{bin}/aura-cli --version")
+                assert_match "aura", shell_output("\#{bin}/aura-cli --version")
               end
             end
           RUBY
