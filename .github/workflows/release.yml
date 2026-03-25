@@ -1,0 +1,269 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ github.ref_name }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-aarch64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+          - name: linux-aarch64
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM64 only)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          curl -fsSL https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz -C /usr/local/bin
+
+      - name: Build release
+        run: |
+          if [ '${{ matrix.target }}' = 'aarch64-unknown-linux-gnu' ]; then
+            cross build --release --target "${{ matrix.target }}" --workspace
+          else
+            cargo build --release --target "${{ matrix.target }}" --workspace
+          fi
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p release-dir
+          cp "target/${{ matrix.target }}/release/aura-daemon" release-dir/
+          cp "target/${{ matrix.target }}/release/aura-cli" release-dir/
+          cp LICENSE release-dir/ 2>/dev/null || true
+          cp README.md release-dir/ 2>/dev/null || true
+
+      - name: Create archive
+        run: |
+          ARCHIVE_NAME=aura-${{ env.VERSION }}-${{ matrix.target }}.tar.xz
+          tar -cJf "$ARCHIVE_NAME" -C release-dir .
+          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-${{ matrix.name }}-artifact
+          path: ${{ env.ARCHIVE_NAME }}
+          retention-days: 5
+
+  release:
+    name: Create Release
+    needs: [build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create release notes
+        run: |
+          echo "Release ${{ env.VERSION }} of AURA telemetry probe." > release-notes.md
+          echo "" >> release-notes.md
+          echo "## Downloads" >> release-notes.md
+          for f in artifacts/*/aura-*.tar.xz; do
+            echo "- \`$(basename "$f")\`" >> release-notes.md
+          done
+          echo "" >> release-notes.md
+          echo "## Changes" >> release-notes.md
+          echo "See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." >> release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view ${{ env.VERSION }} --repo ${{ github.repository }} 2>/dev/null; then
+            echo "Release ${{ env.VERSION }} already exists, skipping creation"
+          else
+            gh release create ${{ env.VERSION }} \
+              --title "${{ env.VERSION }}" \
+              --notes-file release-notes.md \
+              --repo ${{ github.repository }}
+          fi
+
+      - name: Upload artifacts to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for dir in artifacts/*/; do
+            for file in "$dir"*.tar.xz; do
+              [ -f "$file" ] && gh release upload "${{ env.VERSION }}" "$file" --clobber --repo ${{ github.repository }}
+            done
+          done
+
+  homebrew:
+    name: Update Homebrew Formula
+    needs: [release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: zapsaang/homebrew-tap
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p homebrew-tap/Formula
+          cd homebrew-tap
+
+          gh release download "${{ env.VERSION }}" \
+            --pattern "*aarch64-apple-darwin*.tar.xz" \
+            --dir . \
+            --clobber \
+            --repo ${{ github.repository }}
+
+          gh release download "${{ env.VERSION }}" \
+            --pattern "*x86_64-apple-darwin*.tar.xz" \
+            --dir . \
+            --clobber \
+            --repo ${{ github.repository }}
+
+          gh release download "${{ env.VERSION }}" \
+            --pattern "*aarch64-unknown-linux-gnu*.tar.xz" \
+            --dir . \
+            --clobber \
+            --repo ${{ github.repository }}
+
+          gh release download "${{ env.VERSION }}" \
+            --pattern "*x86_64-unknown-linux-gnu*.tar.xz" \
+            --dir . \
+            --clobber \
+            --repo ${{ github.repository }}
+
+      - name: Calculate SHA256 checksums
+        run: |
+          cd homebrew-tap
+          SHA_MACOS_ARM64=$(shasum -a 256 aura-${{ env.VERSION }}-aarch64-apple-darwin.tar.xz | cut -d' ' -f1)
+          SHA_MACOS_X86=$(shasum -a 256 aura-${{ env.VERSION }}-x86_64-apple-darwin.tar.xz | cut -d' ' -f1)
+          SHA_LINUX_ARM64=$(shasum -a 256 aura-${{ env.VERSION }}-aarch64-unknown-linux-gnu.tar.xz | cut -d' ' -f1)
+          SHA_LINUX_X86=$(shasum -a 256 aura-${{ env.VERSION }}-x86_64-unknown-linux-gnu.tar.xz | cut -d' ' -f1)
+
+          echo "SHA_MACOS_ARM64=$SHA_MACOS_ARM64" >> $GITHUB_ENV
+          echo "SHA_MACOS_X86=$SHA_MACOS_X86" >> $GITHUB_ENV
+          echo "SHA_LINUX_ARM64=$SHA_LINUX_ARM64" >> $GITHUB_ENV
+          echo "SHA_LINUX_X86=$SHA_LINUX_X86" >> $GITHUB_ENV
+
+      - name: Derive version without v
+        run: |
+          VERSION_WITHOUT_V="${VERSION#v}"
+          echo "VERSION_WITHOUT_V=$VERSION_WITHOUT_V" >> $GITHUB_ENV
+        env:
+          VERSION: ${{ env.VERSION }}
+
+      - name: Generate Homebrew formula
+        run: |
+          cd homebrew-tap
+          # Using raw string to avoid indentation issues
+          ruby -e '
+          formula = <<~RUBY
+            class Aura < Formula
+              desc "Nanosecond-level system telemetry probe"
+              homepage "https://github.com/zapsaang/aura"
+              version "#{ENV["VERSION_WITHOUT_V"]}"
+              license "MIT OR Apache-2.0"
+
+              on_macos do
+                if Hardware::CPU.intel?
+                  url "https://github.com/zapsaang/aura/releases/download/#{ENV["VERSION"]}/aura-#{ENV["VERSION"]}-x86_64-apple-darwin.tar.xz"
+                  sha256 "#{ENV["SHA_MACOS_X86"]}"
+                  def install
+                    bin.install "aura-daemon", "aura-cli"
+                  end
+                end
+                if Hardware::CPU.arm?
+                  url "https://github.com/zapsaang/aura/releases/download/#{ENV["VERSION"]}/aura-#{ENV["VERSION"]}-aarch64-apple-darwin.tar.xz"
+                  sha256 "#{ENV["SHA_MACOS_ARM64"]}"
+                  def install
+                    bin.install "aura-daemon", "aura-cli"
+                  end
+                end
+              end
+
+              on_linux do
+                if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
+                  url "https://github.com/zapsaang/aura/releases/download/#{ENV["VERSION"]}/aura-#{ENV["VERSION"]}-x86_64-unknown-linux-gnu.tar.xz"
+                  sha256 "#{ENV["SHA_LINUX_X86"]}"
+                  def install
+                    bin.install "aura-daemon", "aura-cli"
+                  end
+                end
+                if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+                  url "https://github.com/zapsaang/aura/releases/download/#{ENV["VERSION"]}/aura-#{ENV["VERSION"]}-aarch64-unknown-linux-gnu.tar.xz"
+                  sha256 "#{ENV["SHA_LINUX_ARM64"]}"
+                  def install
+                    bin.install "aura-daemon", "aura-cli"
+                  end
+                end
+              end
+
+              def caveats
+                <<~EOS
+                  Start daemon: aura-daemon &
+                  Query telemetry: aura-cli -m cpu
+                EOS
+              end
+
+              test do
+                assert_match "aura", shell_output("#{bin}/aura-cli --version")
+              end
+            end
+          RUBY
+          File.write("Formula/aura.rb", formula)
+          '
+
+      - name: Show generated formula
+        run: cat homebrew-tap/Formula/aura.rb
+
+      - name: Commit and push to homebrew-tap
+        run: |
+          cd homebrew-tap
+          git config user.name "AURA Release Bot"
+          git config user.email "aura-release-bot@example.com"
+          git add Formula/aura.rb
+          git diff --staged --quiet && echo "No changes to commit" || {
+            git diff --staged
+            git commit -m "Update aura to ${{ env.VERSION }}"
+            git push origin main
+          }
