@@ -4,7 +4,11 @@ use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStat
 use aura_common::{CpuCoreStat, FixedString16, ProcessStat, MAX_CORES, MAX_TOP_N};
 
 #[cfg(target_os = "macos")]
-use std::{cmp::Ordering, collections::HashMap, sync::Mutex};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use super::PlatformStatsProvider;
 
@@ -73,6 +77,8 @@ unsafe extern "C" {
         buffer: *mut libc::c_void,
         buffersize: libc::c_uint,
     ) -> libc::c_int;
+    fn mach_absolute_time() -> u64;
+    fn mach_timebase_info(info: *mut libc::mach_timebase_info_data_t) -> KernReturn;
 }
 
 #[cfg(target_os = "macos")]
@@ -218,6 +224,17 @@ struct ProcessSnapshot {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct CpuSnapshot {
+    prev_user_ticks: u64,
+    prev_system_ticks: u64,
+    prev_idle_ticks: u64,
+    prev_total_ticks: u64,
+    prev_timestamp_ns: u64,
+    initialized: bool,
+}
+
+#[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct ProcTaskInfo {
@@ -314,6 +331,8 @@ pub struct MacosPlatform {
     host_port: MachPort,
     #[cfg(target_os = "macos")]
     process_snapshot: Mutex<ProcessSnapshot>,
+    #[cfg(target_os = "macos")]
+    cpu_snapshot: Mutex<CpuSnapshot>,
 }
 
 impl MacosPlatform {
@@ -324,6 +343,7 @@ impl MacosPlatform {
             return Ok(Self {
                 host_port,
                 process_snapshot: Mutex::new(ProcessSnapshot::default()),
+                cpu_snapshot: Mutex::new(CpuSnapshot::default()),
             });
         }
 
@@ -347,6 +367,7 @@ impl PlatformStatsProvider for MacosPlatform {
             let mut processor_count: libc::c_uint = 0;
             let mut cpu_info: ProcessorInfoArray = std::ptr::null_mut();
             let mut cpu_info_count: MachMsgTypeNumber = 0;
+            let now_timestamp_ns = mach_absolute_to_ns(unsafe { mach_absolute_time() });
 
             let ret = unsafe {
                 host_processor_info(
@@ -418,6 +439,43 @@ impl PlatformStatsProvider for MacosPlatform {
                 };
             }
 
+            let mut usage_percent = 0.0;
+            let mut snapshot = match self.cpu_snapshot.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+
+            if snapshot.initialized {
+                let delta_user = user.saturating_sub(snapshot.prev_user_ticks);
+                let delta_system = system.saturating_sub(snapshot.prev_system_ticks);
+                let delta_idle = idle.saturating_sub(snapshot.prev_idle_ticks);
+                let delta_total = total.saturating_sub(snapshot.prev_total_ticks);
+
+                let delta_ns = now_timestamp_ns.saturating_sub(snapshot.prev_timestamp_ns);
+                let delta_secs = delta_ns as f64 / 1_000_000_000.0;
+
+                if delta_total > 0 && delta_secs > 0.0 {
+                    let busy_ticks = delta_user
+                        .saturating_add(delta_system)
+                        .min(delta_total.saturating_sub(delta_idle));
+                    let bounded_busy_ticks = busy_ticks.min(delta_total);
+                    let busy_rate = bounded_busy_ticks as f64 / delta_secs;
+                    let total_rate = delta_total as f64 / delta_secs;
+                    usage_percent = if total_rate > 0.0 {
+                        ((busy_rate / total_rate) * 100.0) as f32
+                    } else {
+                        0.0
+                    };
+                }
+            }
+
+            snapshot.prev_user_ticks = user;
+            snapshot.prev_system_ticks = system;
+            snapshot.prev_idle_ticks = idle;
+            snapshot.prev_total_ticks = total;
+            snapshot.prev_timestamp_ns = now_timestamp_ns;
+            snapshot.initialized = true;
+
             return Ok(CpuGlobalStat {
                 user_ticks: user,
                 system_ticks: system,
@@ -425,11 +483,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 total_ticks: total,
                 context_switches: 0,
                 context_switches_per_sec: 0.0,
-                usage_percent: if total > 0 {
-                    ((total.saturating_sub(idle)) as f32 / total as f32) * 100.0
-                } else {
-                    0.0
-                },
+                usage_percent,
                 cores,
                 core_count,
             });
@@ -656,6 +710,27 @@ fn c_char_bytes(buf: &[libc::c_char]) -> &[u8] {
     let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
     let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     &bytes[..len]
+}
+
+#[cfg(target_os = "macos")]
+fn mach_timebase_ratio() -> (u64, u64) {
+    static TIMEBASE: OnceLock<(u64, u64)> = OnceLock::new();
+
+    *TIMEBASE.get_or_init(|| {
+        let mut info = libc::mach_timebase_info_data_t { numer: 0, denom: 0 };
+        let ret = unsafe { mach_timebase_info(&mut info) };
+        if ret == KERN_SUCCESS && info.numer > 0 && info.denom > 0 {
+            (u64::from(info.numer), u64::from(info.denom))
+        } else {
+            (1, 1)
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn mach_absolute_to_ns(ticks: u64) -> u64 {
+    let (numer, denom) = mach_timebase_ratio();
+    ticks.saturating_mul(numer) / denom
 }
 
 #[cfg(target_os = "macos")]

@@ -10,7 +10,7 @@ use clap::{Parser, ValueEnum};
 use reader::TelemetryReader;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "AURA CLI telemetry consumer")]
+#[command(author, version = env!("GIT_VERSION"), about = "AURA CLI telemetry consumer")]
 struct Args {
     #[arg(short = 'm', long, value_enum, default_value_t = Module::All)]
     module: Module,

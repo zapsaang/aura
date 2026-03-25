@@ -1,6 +1,8 @@
 use crate::Module;
 use aura_common::TelemetryArchive;
 
+use super::{meta::os_logo, trim_zero_terminated};
+
 pub fn render(module: Module, telemetry: &TelemetryArchive) -> String {
     match module {
         Module::Cpu => format!("{:.1}", telemetry.cpu.usage_percent),
@@ -56,7 +58,18 @@ pub fn render(module: Module, telemetry: &TelemetryArchive) -> String {
             }
             format!("{:.0}", total_rate)
         }
-        Module::Os => "1".to_string(),
+        Module::Os => {
+            let meta = &telemetry.meta;
+            let os_type = meta.os.os_type.as_str();
+            let os_id = meta.os.os_id.as_str();
+            let pretty = trim_zero_terminated(&meta.os.os_pretty_name);
+            let logo = os_logo(os_id, os_type);
+            if pretty.is_empty() {
+                format!("{} {}", logo, os_type)
+            } else {
+                format!("{} {}", logo, pretty)
+            }
+        }
         Module::All => {
             let mem = &telemetry.memory;
             let cpu_val = telemetry.cpu.usage_percent;

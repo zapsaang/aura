@@ -9,7 +9,7 @@ use aura_common::{AuraResult, DEFAULT_HEARTBEAT_MS, SHM_PATH};
 use aura_daemon::{collectors, heartbeat, platform, state};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "AURA daemon telemetry producer")]
+#[command(author, version = env!("GIT_VERSION"), about = "AURA daemon telemetry producer")]
 struct Args {
     #[arg(short, long, default_value = SHM_PATH)]
     shm_path: String,
