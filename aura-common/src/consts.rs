@@ -1,5 +1,8 @@
-/// Shared memory file path (Linux: tmpfs, macOS: /tmp shm)
+#[cfg(target_os = "linux")]
 pub const SHM_PATH: &str = "/dev/shm/aura_state.dat";
+
+#[cfg(target_os = "macos")]
+pub const SHM_PATH: &str = "/tmp/aura_state.dat";
 
 /// Shared memory file size (64KB - must be page-aligned)
 pub const SHM_SIZE: usize = 65536;
