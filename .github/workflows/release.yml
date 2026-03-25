@@ -227,10 +227,29 @@ jobs:
                 end
               end
 
+              service do
+                run opt_bin/"aura-daemon"
+                working_dir HOMEBREW_PREFIX
+                keep_alive
+                error_log_path var/"log/aura/error.log"
+              end
+
               def caveats
                 <<~EOS
-                  Start daemon: aura-daemon &
-                  Query telemetry: aura-cli -m cpu
+                  AURA telemetry daemon is now registered as a service.
+
+                  To start the service:
+                    brew services start aura
+
+                  To check service status:
+                    brew services info aura
+
+                  To stop the service:
+                    brew services stop aura
+
+                  Or run manually:
+                    aura-daemon &
+                    aura-cli -m cpu
                 EOS
               end
 
