@@ -1,0 +1,202 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init env
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+          echo 'DPkg::TriggersPending "false";' \
+            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+
+          sudo -E apt-get -qq update
+
+          sudo -E apt-get install -y --no-install-recommends \
+            build-essential \
+            protobuf-compiler \
+            libacl1-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt (check)
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy (-D warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test-common:
+    name: test-aura-common
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init env
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+          echo 'DPkg::TriggersPending "false";' \
+            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+
+          sudo -E apt-get -qq update
+
+          sudo -E apt-get install -y --no-install-recommends \
+            build-essential \
+            libssl-dev \
+            pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test -p aura-common
+        run: cargo test -p aura-common
+
+  test-daemon:
+    name: test-aura-daemon
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init env
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+          echo 'DPkg::TriggersPending "false";' \
+            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+
+          sudo -E apt-get -qq update
+
+          sudo -E apt-get install -y --no-install-recommends \
+            build-essential \
+            libssl-dev \
+            pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test -p aura-daemon
+        run: cargo test -p aura-daemon
+
+  test-cli:
+    name: test-aura-cli
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init env
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+          echo 'DPkg::TriggersPending "false";' \
+            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+
+          sudo -E apt-get -qq update
+
+          sudo -E apt-get install -y --no-install-recommends \
+            build-essential \
+            libssl-dev \
+            pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test -p aura-cli
+        run: cargo test -p aura-cli
+
+  test-workspace:
+    name: test-workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init env
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+          echo 'DPkg::TriggersPending "false";' \
+            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+
+          sudo -E apt-get -qq update
+
+          sudo -E apt-get install -y --no-install-recommends \
+            build-essential \
+            libssl-dev \
+            pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test --workspace
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --workspace
+
+  test-macos:
+    name: test-macos
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test --workspace
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --workspace

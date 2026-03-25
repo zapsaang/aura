@@ -1,0 +1,3 @@
+pgpgin 12345
+pgpgout 54321
+pgfault 67890
