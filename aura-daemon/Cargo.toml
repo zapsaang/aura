@@ -17,4 +17,5 @@ nvml-wrapper = { workspace = true, optional = true }
 libc = "0.2"
 
 [dev-dependencies]
+serial_test = "3"
 tempfile = "3"
