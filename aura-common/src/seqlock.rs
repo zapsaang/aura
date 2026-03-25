@@ -5,8 +5,13 @@ use rkyv::{to_bytes, Archive, Deserialize};
 
 use crate::{AuraError, AuraResult};
 
+/// Reads a seqlock-protected value with spin-wait retry logic.
+///
+/// # Safety
+/// The `data_ptr` must be non-null, properly aligned, and point to valid initialized memory
+/// for the lifetime of the operation. The `version_ptr` must be synchronized with `data_ptr`.
 #[inline]
-pub fn read_seqlock<T: Archive + Deserialize<T, rkyv::Infallible>>(
+pub unsafe fn read_seqlock<T: Archive + Deserialize<T, rkyv::Infallible>>(
     version_ptr: &AtomicUsize,
     data_ptr: *const T,
 ) -> AuraResult<T> {
@@ -45,8 +50,13 @@ pub fn read_seqlock<T: Archive + Deserialize<T, rkyv::Infallible>>(
     }
 }
 
+/// Writes a seqlock-protected value with version increment protocol.
+///
+/// # Safety
+/// The `data_ptr` must be non-null, properly aligned, and point to valid memory
+/// capable of holding a serialized `T`. The `version_ptr` must be synchronized with `data_ptr`.
 #[inline]
-pub fn write_seqlock<T: rkyv::Serialize<rkyv::ser::serializers::AllocSerializer<1024>>>(
+pub unsafe fn write_seqlock<T: rkyv::Serialize<rkyv::ser::serializers::AllocSerializer<1024>>>(
     version_ptr: &mut AtomicUsize,
     data_ptr: *mut T,
     value: &T,

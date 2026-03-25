@@ -36,7 +36,7 @@ impl ShmHandle {
         unsafe { (*version_ptr).fetch_add(1, Ordering::SeqCst) };
         compiler_fence(Ordering::SeqCst);
 
-        let dst = unsafe { base.add(DATA_OFFSET) } as *mut u8;
+        let dst = unsafe { base.add(DATA_OFFSET) };
         let src = telemetry as *const TelemetryArchive as *const u8;
         let len = std::mem::size_of::<TelemetryArchive>();
         unsafe {

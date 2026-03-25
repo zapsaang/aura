@@ -105,12 +105,12 @@ fn seqlock_writer_makes_version_odd_to_even() {
     let initial = version.load(Ordering::SeqCst);
     assert_eq!(initial, 0);
 
-    write_seqlock(&mut version, bytes.as_ptr() as *mut CpuGlobalStat, &cpu).unwrap();
+    unsafe { write_seqlock(&mut version, bytes.as_ptr() as *mut CpuGlobalStat, &cpu).unwrap() };
 
     let final_version = version.load(Ordering::SeqCst);
     assert_eq!(final_version, 2);
     assert!(
-        final_version % 2 == 0,
+        final_version.is_multiple_of(2),
         "Version should be even after write completes"
     );
 }

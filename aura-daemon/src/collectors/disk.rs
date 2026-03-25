@@ -133,9 +133,9 @@ fn get_fs_stats(mountpoint: &[u8]) -> (u64, u64, u64, f32) {
     }
 
     let s = unsafe { s.assume_init() };
-    let frsize = s.f_frsize as u64;
-    let total = (s.f_blocks as u64).saturating_mul(frsize);
-    let available = (s.f_bavail as u64).saturating_mul(frsize);
+    let frsize = s.f_frsize;
+    let total = s.f_blocks.saturating_mul(frsize);
+    let available = s.f_bavail.saturating_mul(frsize);
     let used = total.saturating_sub(available);
     let percent = if total > 0 {
         (used as f32 / total as f32) * 100.0

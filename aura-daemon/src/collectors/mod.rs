@@ -89,6 +89,12 @@ impl CollectorState {
     }
 }
 
+impl Default for CollectorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn init(state: &mut CollectorState) -> AuraResult<()> {
     #[cfg(target_os = "linux")]
     {

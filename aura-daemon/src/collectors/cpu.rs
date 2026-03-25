@@ -25,9 +25,8 @@ pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
         line_start = i + 1;
 
         if line.starts_with(b"cpu ") {
-            let mut idx = 0usize;
             let fields = &line[4..];
-            for field in split_whitespace(fields) {
+            for (idx, field) in split_whitespace(fields).enumerate() {
                 let v = parse_u64(field)?;
                 match idx {
                     0 => user = v,
@@ -40,7 +39,6 @@ pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
                     7 => steal = v,
                     _ => {}
                 }
-                idx += 1;
             }
         } else if line.starts_with(b"ctxt ") {
             ctxt = parse_u64(&line[5..])?;
@@ -75,13 +73,11 @@ pub fn parse_core_stats(
         }
 
         let mut fields = [0u64; 8];
-        let mut fi = 0usize;
-        for field in split_whitespace(&line[4..]) {
+        for (fi, field) in split_whitespace(&line[4..]).enumerate() {
             if fi >= fields.len() {
                 break;
             }
             fields[fi] = parse_u64(field)?;
-            fi += 1;
         }
 
         let user = fields[0];

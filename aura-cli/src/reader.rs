@@ -94,7 +94,7 @@ impl TelemetryReader {
 
     #[inline]
     fn data_ptr<T>(&self) -> *const T {
-        unsafe { (self.mmap.as_ptr() as *const u8).add(DATA_OFFSET) as *const T }
+        unsafe { self.mmap.as_ptr().add(DATA_OFFSET).cast::<T>() }
     }
 }
 
