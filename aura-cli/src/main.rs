@@ -48,6 +48,7 @@ pub enum ColorMode {
 pub enum OutputFormat {
     Human,
     Json,
+    Value,
 }
 
 fn run(args: Args) -> AuraResult<String> {
@@ -65,6 +66,7 @@ fn run(args: Args) -> AuraResult<String> {
     let rendered = match args.format {
         OutputFormat::Human => output::render(args.module, args.color, &telemetry),
         OutputFormat::Json => format::json::render(args.module, &telemetry)?,
+        OutputFormat::Value => output::value::render(args.module, &telemetry),
     };
 
     Ok(rendered)

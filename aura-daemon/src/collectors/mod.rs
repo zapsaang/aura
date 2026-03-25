@@ -165,11 +165,15 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let _ = delta_secs;
         let provider = crate::platform::provider()?;
         state.telemetry.cpu = provider.cpu_stats()?;
         state.telemetry.memory = provider.memory_stats()?;
         state.telemetry.process = provider.process_stats()?;
+        disk::collect_macos(
+            &mut state.telemetry.storage,
+            &mut state.prev_disk_sectors,
+            delta_secs,
+        )?;
     }
 
     state.telemetry.meta.timestamp_ns = now;

@@ -4,6 +4,7 @@ pub mod disk;
 pub mod mem;
 pub mod meta;
 pub mod net;
+pub mod value;
 
 use aura_common::TelemetryArchive;
 

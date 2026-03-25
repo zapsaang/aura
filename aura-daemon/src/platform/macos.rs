@@ -1,7 +1,10 @@
 use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStats};
 
 #[cfg(target_os = "macos")]
-use aura_common::{CpuCoreStat, ProcessStat, MAX_CORES, MAX_TOP_N};
+use aura_common::{CpuCoreStat, FixedString16, ProcessStat, MAX_CORES, MAX_TOP_N};
+
+#[cfg(target_os = "macos")]
+use std::{cmp::Ordering, collections::HashMap, sync::Mutex};
 
 use super::PlatformStatsProvider;
 
@@ -25,6 +28,19 @@ const PROCESSOR_CPU_LOAD_INFO: libc::c_int = 2;
 const CPU_STATE_MAX: usize = 4;
 #[cfg(target_os = "macos")]
 const HOST_VM_INFO64: libc::c_int = 4;
+#[cfg(target_os = "macos")]
+const PROC_PIDTASKINFO: libc::c_int = 4;
+#[cfg(target_os = "macos")]
+const PROC_PIDTBSDINFO: libc::c_int = 3;
+
+#[cfg(target_os = "macos")]
+const SIDL: u32 = 1;
+#[cfg(target_os = "macos")]
+const SRUN: u32 = 2;
+#[cfg(target_os = "macos")]
+const SSLEEP: u32 = 3;
+#[cfg(target_os = "macos")]
+const SSTOP: u32 = 4;
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -45,12 +61,259 @@ unsafe extern "C" {
     ) -> KernReturn;
     fn vm_deallocate(target_task: MachPort, address: usize, size: usize) -> KernReturn;
     fn proc_listallpids(buffer: *mut libc::c_void, buffersize: libc::c_int) -> libc::c_int;
+    fn proc_pidinfo(
+        pid: libc::c_int,
+        flavor: libc::c_int,
+        arg: u64,
+        buffer: *mut libc::c_void,
+        buffersize: libc::c_int,
+    ) -> libc::c_int;
+    fn proc_name(
+        pid: libc::c_int,
+        buffer: *mut libc::c_void,
+        buffersize: libc::c_uint,
+    ) -> libc::c_int;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct HeapEntry {
+    key: u64,
+    stat: ProcessStat,
+}
+
+#[cfg(target_os = "macos")]
+impl HeapEntry {
+    fn new(key: u64, stat: ProcessStat) -> Self {
+        Self { key, stat }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl PartialEq for HeapEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Eq for HeapEntry {}
+
+#[cfg(target_os = "macos")]
+impl PartialOrd for HeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Ord for HeapEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct MinHeap5 {
+    heap: [Option<HeapEntry>; MAX_TOP_N],
+    count: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl MinHeap5 {
+    fn new() -> Self {
+        Self {
+            heap: [None, None, None, None, None],
+            count: 0,
+        }
+    }
+
+    fn push(&mut self, val: HeapEntry) {
+        if self.count < MAX_TOP_N {
+            self.heap[self.count] = Some(val);
+            self.bubble_up(self.count);
+            self.count += 1;
+            return;
+        }
+
+        if let Some(root) = self.heap[0] {
+            if val > root {
+                self.heap[0] = Some(val);
+                self.bubble_down(0);
+            }
+        }
+    }
+
+    fn bubble_up(&mut self, mut i: usize) {
+        while i > 0 {
+            let p = (i - 1) / 2;
+            if self.heap[i] < self.heap[p] {
+                self.heap.swap(i, p);
+                i = p;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn bubble_down(&mut self, mut i: usize) {
+        loop {
+            let l = i * 2 + 1;
+            let r = i * 2 + 2;
+            let mut s = i;
+
+            if l < self.count && self.heap[l] < self.heap[s] {
+                s = l;
+            }
+            if r < self.count && self.heap[r] < self.heap[s] {
+                s = r;
+            }
+            if s == i {
+                break;
+            }
+            self.heap.swap(i, s);
+            i = s;
+        }
+    }
+
+    fn as_desc_array(&self) -> [ProcessStat; MAX_TOP_N] {
+        let mut tmp = self.heap;
+        let mut n = self.count;
+        let mut out = [zero_process(); MAX_TOP_N];
+        let mut idx = 0usize;
+
+        while n > 0 && idx < MAX_TOP_N {
+            let max_i = max_entry_index(&tmp, n);
+            if let Some(v) = tmp[max_i] {
+                out[idx] = v.stat;
+                idx += 1;
+            }
+            tmp[max_i] = tmp[n - 1];
+            tmp[n - 1] = None;
+            n -= 1;
+        }
+
+        out
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn max_entry_index(arr: &[Option<HeapEntry>; MAX_TOP_N], n: usize) -> usize {
+    let mut max_i = 0usize;
+    let mut i = 1usize;
+    while i < n {
+        if arr[i] > arr[max_i] {
+            max_i = i;
+        }
+        i += 1;
+    }
+    max_i
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct ProcessSnapshot {
+    prev_proc_ticks: HashMap<u32, u64>,
+    prev_total_ticks: u64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct ProcTaskInfo {
+    pti_virtual_size: u64,
+    pti_resident_size: u64,
+    pti_total_user: u64,
+    pti_total_system: u64,
+    pti_threads_user: u64,
+    pti_threads_system: u64,
+    pti_policy: i32,
+    pti_faults: i32,
+    pti_pageins: i32,
+    pti_cow_faults: i32,
+    pti_messages_sent: i32,
+    pti_messages_received: i32,
+    pti_syscalls_mach: i32,
+    pti_syscalls_unix: i32,
+    pti_csw: i32,
+    pti_threadnum: i32,
+    pti_numrunning: i32,
+    pti_priority: i32,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ProcBsdInfo {
+    pbi_flags: u32,
+    pbi_status: u32,
+    pbi_xstatus: u32,
+    pbi_pid: u32,
+    pbi_ppid: u32,
+    pbi_uid: libc::uid_t,
+    pbi_gid: libc::gid_t,
+    pbi_ruid: libc::uid_t,
+    pbi_rgid: libc::gid_t,
+    pbi_svuid: libc::uid_t,
+    pbi_svgid: libc::gid_t,
+    rfu_1: u32,
+    pbi_comm: [libc::c_char; 17],
+    pbi_name: [libc::c_char; 2 * 17],
+    pbi_nfiles: u32,
+    pbi_pgid: u32,
+    pbi_pjobc: u32,
+    e_tdev: u32,
+    e_tpgid: u32,
+    pbi_nice: i32,
+    pbi_start_tvsec: u64,
+    pbi_start_tvusec: u64,
+}
+
+#[cfg(target_os = "macos")]
+impl Default for ProcBsdInfo {
+    fn default() -> Self {
+        Self {
+            pbi_flags: 0,
+            pbi_status: 0,
+            pbi_xstatus: 0,
+            pbi_pid: 0,
+            pbi_ppid: 0,
+            pbi_uid: 0,
+            pbi_gid: 0,
+            pbi_ruid: 0,
+            pbi_rgid: 0,
+            pbi_svuid: 0,
+            pbi_svgid: 0,
+            rfu_1: 0,
+            pbi_comm: [0; 17],
+            pbi_name: [0; 34],
+            pbi_nfiles: 0,
+            pbi_pgid: 0,
+            pbi_pjobc: 0,
+            e_tdev: 0,
+            e_tpgid: 0,
+            pbi_nice: 0,
+            pbi_start_tvsec: 0,
+            pbi_start_tvusec: 0,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct ProcSample {
+    pid: u32,
+    comm: FixedString16,
+    memory_bytes: u64,
+    delta_ticks: u64,
+}
+
+#[derive(Debug)]
 pub struct MacosPlatform {
     #[cfg(target_os = "macos")]
     host_port: MachPort,
+    #[cfg(target_os = "macos")]
+    process_snapshot: Mutex<ProcessSnapshot>,
 }
 
 impl MacosPlatform {
@@ -58,7 +321,10 @@ impl MacosPlatform {
         #[cfg(target_os = "macos")]
         {
             let host_port = unsafe { mach_host_self() };
-            return Ok(Self { host_port });
+            return Ok(Self {
+                host_port,
+                process_snapshot: Mutex::new(ProcessSnapshot::default()),
+            });
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -237,31 +503,143 @@ impl PlatformStatsProvider for MacosPlatform {
     fn process_stats(&self) -> AuraResult<ProcessStats> {
         #[cfg(target_os = "macos")]
         {
+            let mut out = ProcessStats {
+                total: 0,
+                running: 0,
+                blocked: 0,
+                sleeping: 0,
+                top_cpu: [zero_process(); MAX_TOP_N],
+                top_mem: [zero_process(); MAX_TOP_N],
+            };
+
             let pid_cap = 4096usize;
             let mut pids = vec![0u32; pid_cap];
-            let bytes = unsafe {
+            let listed = unsafe {
                 proc_listallpids(
                     pids.as_mut_ptr() as *mut libc::c_void,
                     (pid_cap * std::mem::size_of::<u32>()) as libc::c_int,
                 )
             };
 
-            if bytes < 0 {
-                return Err(AuraError::PlatformNotSupported(
-                    "proc_listallpids failed".to_string(),
-                ));
+            if listed <= 0 {
+                return Ok(out);
             }
 
-            let count = (bytes as usize) / std::mem::size_of::<u32>();
+            let pid_count = (listed as usize).min(pid_cap);
+            let mut snapshot = match self.process_snapshot.lock() {
+                Ok(g) => g,
+                Err(_) => return Ok(out),
+            };
 
-            return Ok(ProcessStats {
-                total: count as u32,
-                running: 0,
-                blocked: 0,
-                sleeping: 0,
-                top_cpu: [zero_process(); MAX_TOP_N],
-                top_mem: [zero_process(); MAX_TOP_N],
-            });
+            let mut current_ticks = HashMap::with_capacity(pid_count);
+            let mut samples = Vec::with_capacity(pid_count);
+            let mut total_ticks = 0u64;
+
+            let taskinfo_size = std::mem::size_of::<ProcTaskInfo>() as libc::c_int;
+            let bsdinfo_size = std::mem::size_of::<ProcBsdInfo>() as libc::c_int;
+
+            for pid in &pids[..pid_count] {
+                if *pid == 0 {
+                    continue;
+                }
+
+                let mut taskinfo = ProcTaskInfo::default();
+                let task_ret = unsafe {
+                    proc_pidinfo(
+                        *pid as libc::c_int,
+                        PROC_PIDTASKINFO,
+                        0,
+                        &mut taskinfo as *mut ProcTaskInfo as *mut libc::c_void,
+                        taskinfo_size,
+                    )
+                };
+                if task_ret != taskinfo_size {
+                    continue;
+                }
+
+                let mut bsdinfo = ProcBsdInfo::default();
+                let bsd_ret = unsafe {
+                    proc_pidinfo(
+                        *pid as libc::c_int,
+                        PROC_PIDTBSDINFO,
+                        0,
+                        &mut bsdinfo as *mut ProcBsdInfo as *mut libc::c_void,
+                        bsdinfo_size,
+                    )
+                };
+                if bsd_ret != bsdinfo_size {
+                    continue;
+                }
+
+                out.total = out.total.saturating_add(1);
+                match bsdinfo.pbi_status {
+                    SRUN => out.running = out.running.saturating_add(1),
+                    SSLEEP | SSTOP => out.sleeping = out.sleeping.saturating_add(1),
+                    SIDL => out.blocked = out.blocked.saturating_add(1),
+                    _ => {}
+                }
+
+                let proc_ticks = taskinfo
+                    .pti_total_user
+                    .saturating_add(taskinfo.pti_total_system);
+                total_ticks = total_ticks.saturating_add(proc_ticks);
+                current_ticks.insert(*pid, proc_ticks);
+
+                let prev_ticks = snapshot.prev_proc_ticks.get(pid).copied().unwrap_or(0);
+                let delta_ticks = proc_ticks.saturating_sub(prev_ticks);
+
+                let mut name_buf = [0u8; 64];
+                let name_len = unsafe {
+                    proc_name(
+                        *pid as libc::c_int,
+                        name_buf.as_mut_ptr() as *mut libc::c_void,
+                        name_buf.len() as libc::c_uint,
+                    )
+                };
+
+                let comm = if name_len > 0 {
+                    FixedString16::from_bytes(&name_buf[..(name_len as usize).min(name_buf.len())])
+                } else {
+                    FixedString16::from_bytes(c_char_bytes(&bsdinfo.pbi_comm))
+                };
+
+                samples.push(ProcSample {
+                    pid: *pid,
+                    comm,
+                    memory_bytes: taskinfo.pti_resident_size,
+                    delta_ticks,
+                });
+            }
+
+            let global_delta = total_ticks.saturating_sub(snapshot.prev_total_ticks);
+            snapshot.prev_total_ticks = total_ticks;
+            snapshot.prev_proc_ticks = current_ticks;
+
+            let mut cpu_heap = MinHeap5::new();
+            let mut mem_heap = MinHeap5::new();
+
+            for sample in samples {
+                let cpu_usage = if global_delta > 0 {
+                    (sample.delta_ticks as f32 / global_delta as f32) * 100.0
+                } else {
+                    0.0
+                };
+
+                let stat = ProcessStat {
+                    pid: sample.pid,
+                    cpu_usage,
+                    memory_bytes: sample.memory_bytes,
+                    comm: sample.comm,
+                };
+
+                cpu_heap.push(HeapEntry::new(sample.delta_ticks, stat));
+                mem_heap.push(HeapEntry::new(sample.memory_bytes, stat));
+            }
+
+            out.top_cpu = cpu_heap.as_desc_array();
+            out.top_mem = mem_heap.as_desc_array();
+
+            return Ok(out);
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -271,6 +649,13 @@ impl PlatformStatsProvider for MacosPlatform {
             ))
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn c_char_bytes(buf: &[libc::c_char]) -> &[u8] {
+    let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    &bytes[..len]
 }
 
 #[cfg(target_os = "macos")]
