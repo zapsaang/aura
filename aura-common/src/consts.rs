@@ -14,7 +14,7 @@ pub const DATA_OFFSET: usize = 8;
 pub const DEFAULT_HEARTBEAT_MS: u64 = 500;
 
 /// Maximum spin wait time before declaring offline (milliseconds)
-pub const MAX_SPIN_WAIT_MS: u64 = 10;
+pub const MAX_SPIN_WAIT_MS: u64 = 100;
 
 /// Offline threshold in seconds
 pub const OFFLINE_THRESHOLD_SECS: f64 = 2.0;
