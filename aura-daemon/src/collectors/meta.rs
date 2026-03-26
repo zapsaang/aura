@@ -3,6 +3,8 @@ use std::io::Read;
 
 use aura_common::{AuraResult, FixedString16, MetaStats, OsFingerprint};
 
+use super::parsing::{split_whitespace, trim_ascii};
+
 pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {
     let mut os = OsFingerprint {
         os_type: FixedString16::from_bytes(b"linux"),
@@ -20,7 +22,7 @@ pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {
 }
 
 pub fn collect(meta: &mut MetaStats) -> AuraResult<()> {
-    meta.timestamp_ns = monotonic_ns();
+    meta.timestamp_ns = aura_common::monotonic_ns();
 
     let mut buf = [0u8; 4096];
 
@@ -130,40 +132,12 @@ fn parse_first_f64_to_u64(b: &[u8]) -> u64 {
     int
 }
 
-fn trim_ascii(mut b: &[u8]) -> &[u8] {
-    while !b.is_empty() && b[0].is_ascii_whitespace() {
-        b = &b[1..];
-    }
-    while !b.is_empty() && b[b.len() - 1].is_ascii_whitespace() {
-        b = &b[..b.len() - 1];
-    }
-    b
-}
-
 fn trim_quote(b: &[u8]) -> &[u8] {
     if b.len() >= 2 && b[0] == b'"' && b[b.len() - 1] == b'"' {
         &b[1..b.len() - 1]
     } else {
         b
     }
-}
-
-fn split_whitespace(mut b: &[u8]) -> impl Iterator<Item = &[u8]> {
-    std::iter::from_fn(move || {
-        while !b.is_empty() && b[0].is_ascii_whitespace() {
-            b = &b[1..];
-        }
-        if b.is_empty() {
-            return None;
-        }
-        let mut end = 0usize;
-        while end < b.len() && !b[end].is_ascii_whitespace() {
-            end += 1;
-        }
-        let token = &b[..end];
-        b = &b[end..];
-        Some(token)
-    })
 }
 
 fn timezone_info() -> ([u8; 8], i32) {
@@ -205,12 +179,6 @@ fn tm_to_seconds(h: i32, m: i32, s: i32) -> i32 {
     h.saturating_mul(3600)
         .saturating_add(m.saturating_mul(60))
         .saturating_add(s)
-}
-
-fn monotonic_ns() -> u64 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    let start = START.get_or_init(std::time::Instant::now);
-    start.elapsed().as_nanos() as u64
 }
 
 #[cfg(test)]

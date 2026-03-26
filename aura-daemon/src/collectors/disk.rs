@@ -9,6 +9,7 @@ use aura_common::{
     AuraResult, DiskStat, FixedString16, MountStat, StorageStats, MAX_DISKS, MAX_MOUNTS,
 };
 
+use super::parsing::{parse_u64, split_whitespace};
 use super::DiskSectorSnapshot;
 
 #[cfg(target_os = "macos")]
@@ -135,8 +136,8 @@ pub fn parse_diskstats(
         }
 
         let name = FixedString16::from_bytes(fields[2]);
-        let rx_bytes = parse_u64(fields[5]).saturating_mul(512);
-        let wx_bytes = parse_u64(fields[9]).saturating_mul(512);
+        let rx_bytes = parse_u64(fields[5]).unwrap_or(0).saturating_mul(512);
+        let wx_bytes = parse_u64(fields[9]).unwrap_or(0).saturating_mul(512);
 
         disks_out[count] = DiskStat {
             name,
@@ -279,38 +280,6 @@ pub fn collect(
     prev.count = count;
 
     Ok(())
-}
-
-fn parse_u64(b: &[u8]) -> u64 {
-    let mut out = 0u64;
-    let mut seen = false;
-    for &c in b {
-        if c.is_ascii_digit() {
-            out = out.saturating_mul(10).saturating_add((c - b'0') as u64);
-            seen = true;
-        } else if seen {
-            break;
-        }
-    }
-    out
-}
-
-fn split_whitespace(mut b: &[u8]) -> impl Iterator<Item = &[u8]> {
-    std::iter::from_fn(move || {
-        while !b.is_empty() && b[0].is_ascii_whitespace() {
-            b = &b[1..];
-        }
-        if b.is_empty() {
-            return None;
-        }
-        let mut end = 0usize;
-        while end < b.len() && !b[end].is_ascii_whitespace() {
-            end += 1;
-        }
-        let token = &b[..end];
-        b = &b[end..];
-        Some(token)
-    })
 }
 
 #[cfg(test)]

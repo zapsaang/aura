@@ -1,9 +1,14 @@
 use std::fs::File;
 use std::io::Read;
+use std::sync::OnceLock;
 
 use aura_common::{AuraResult, FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
+use log::warn;
 
+use super::parsing::{parse_u64, split_whitespace, trim_ascii};
 use super::NetByteSnapshot;
+
+static NETIF_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
 
 pub fn parse_net_dev(
     buf: &[u8],
@@ -25,7 +30,14 @@ pub fn parse_net_dev(
         if line_no <= 2 {
             continue;
         }
-        if count >= MAX_NETIFS {
+        if count >= MAX_NETIFS && NETIF_LIMIT_WARNED.get().is_none() {
+            warn!(
+                "Network interface limit reached: {} interfaces detected (MAX_NETIFS={}). \
+                Some interfaces will not be monitored.",
+                line_no.saturating_sub(2),
+                MAX_NETIFS
+            );
+            NETIF_LIMIT_WARNED.set(()).ok();
             break;
         }
 
@@ -43,9 +55,9 @@ pub fn parse_net_dev(
         let mut tx = 0u64;
         for (idx, tok) in split_whitespace(values).enumerate() {
             if idx == 0 {
-                rx = parse_u64(tok);
+                rx = parse_u64(tok).unwrap_or(0);
             } else if idx == 8 {
-                tx = parse_u64(tok);
+                tx = parse_u64(tok).unwrap_or(0);
                 break;
             }
         }
@@ -96,48 +108,6 @@ pub fn collect(
     prev.count = count;
 
     Ok(())
-}
-
-fn parse_u64(b: &[u8]) -> u64 {
-    let mut out = 0u64;
-    let mut seen = false;
-    for &c in b {
-        if c.is_ascii_digit() {
-            out = out.saturating_mul(10).saturating_add((c - b'0') as u64);
-            seen = true;
-        } else if seen {
-            break;
-        }
-    }
-    out
-}
-
-fn trim_ascii(mut b: &[u8]) -> &[u8] {
-    while !b.is_empty() && b[0].is_ascii_whitespace() {
-        b = &b[1..];
-    }
-    while !b.is_empty() && b[b.len() - 1].is_ascii_whitespace() {
-        b = &b[..b.len() - 1];
-    }
-    b
-}
-
-fn split_whitespace(mut b: &[u8]) -> impl Iterator<Item = &[u8]> {
-    std::iter::from_fn(move || {
-        while !b.is_empty() && b[0].is_ascii_whitespace() {
-            b = &b[1..];
-        }
-        if b.is_empty() {
-            return None;
-        }
-        let mut end = 0usize;
-        while end < b.len() && !b[end].is_ascii_whitespace() {
-            end += 1;
-        }
-        let token = &b[..end];
-        b = &b[end..];
-        Some(token)
-    })
 }
 
 #[cfg(test)]

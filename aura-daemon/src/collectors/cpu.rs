@@ -1,9 +1,14 @@
 use std::fs::File;
 use std::io::Read;
+use std::sync::OnceLock;
 
-use aura_common::{AuraError, AuraResult, CpuCoreStat, CpuGlobalStat, MAX_CORES};
+use aura_common::{AuraResult, CpuCoreStat, CpuGlobalStat, MAX_CORES};
+use log::warn;
 
+use super::parsing::{parse_u64, split_whitespace};
 use super::CpuTickSnapshot;
+
+static CORE_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
 
 pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
     let mut user = 0u64;
@@ -72,8 +77,16 @@ pub fn parse_core_stats(
             continue;
         }
 
+        let mut field_start = 3;
+        while field_start < line.len() && line[field_start].is_ascii_digit() {
+            field_start += 1;
+        }
+        while field_start < line.len() && line[field_start] == b' ' {
+            field_start += 1;
+        }
+
         let mut fields = [0u64; 8];
-        for (fi, field) in split_whitespace(&line[4..]).enumerate() {
+        for (fi, field) in split_whitespace(&line[field_start..]).enumerate() {
             if fi >= fields.len() {
                 break;
             }
@@ -98,6 +111,15 @@ pub fn parse_core_stats(
             },
         };
         count += 1;
+    }
+
+    if count >= MAX_CORES && CORE_LIMIT_WARNED.get().is_none() {
+        warn!(
+            "CPU core limit reached: {} cores detected (MAX_CORES={}). \
+            Run 'cat /proc/cpuinfo' to see all cores.",
+            count, MAX_CORES
+        );
+        CORE_LIMIT_WARNED.set(()).ok();
     }
 
     *core_count = count as u8;
@@ -143,42 +165,6 @@ pub fn collect(
     };
 
     parse_core_stats(data, &mut out.cores, &mut out.core_count)
-}
-
-fn parse_u64(b: &[u8]) -> AuraResult<u64> {
-    let mut out = 0u64;
-    let mut seen = false;
-    for &c in b {
-        if c.is_ascii_digit() {
-            out = out.saturating_mul(10).saturating_add((c - b'0') as u64);
-            seen = true;
-        } else if seen {
-            break;
-        }
-    }
-    if seen {
-        Ok(out)
-    } else {
-        Err(AuraError::ParseError("cpu u64 parse failed".to_string()))
-    }
-}
-
-fn split_whitespace(mut b: &[u8]) -> impl Iterator<Item = &[u8]> {
-    std::iter::from_fn(move || {
-        while !b.is_empty() && b[0].is_ascii_whitespace() {
-            b = &b[1..];
-        }
-        if b.is_empty() {
-            return None;
-        }
-        let mut end = 0usize;
-        while end < b.len() && !b[end].is_ascii_whitespace() {
-            end += 1;
-        }
-        let token = &b[..end];
-        b = &b[end..];
-        Some(token)
-    })
 }
 
 #[cfg(test)]

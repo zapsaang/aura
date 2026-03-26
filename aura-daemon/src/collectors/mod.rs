@@ -1,12 +1,16 @@
 pub mod cpu;
 pub mod disk;
 pub mod gpu;
+pub mod heap;
 pub mod memory;
 pub mod meta;
 pub mod network;
+pub mod parsing;
 pub mod process;
 
-use aura_common::{AuraResult, TelemetryArchive, MAX_DISKS, MAX_NETIFS, MAX_PID, PROC_BUFFER_SIZE};
+use std::collections::HashMap;
+
+use aura_common::{AuraResult, TelemetryArchive, MAX_DISKS, MAX_NETIFS, PROC_BUFFER_SIZE};
 
 #[derive(Clone, Copy)]
 pub struct CpuTickSnapshot {
@@ -67,7 +71,7 @@ pub struct CollectorState {
     pub prev_page_faults: u64,
     pub prev_timestamp_ns: u64,
     pub prev_proc_total_ticks: u64,
-    pub prev_proc_ticks: [u64; (MAX_PID as usize) + 1],
+    pub prev_proc_ticks: HashMap<u32, u64>,
     pub proc_buffer: [u8; PROC_BUFFER_SIZE],
     pub aux_buffer: [u8; PROC_BUFFER_SIZE],
 }
@@ -82,7 +86,7 @@ impl CollectorState {
             prev_page_faults: 0,
             prev_timestamp_ns: 0,
             prev_proc_total_ticks: 0,
-            prev_proc_ticks: [0; (MAX_PID as usize) + 1],
+            prev_proc_ticks: HashMap::with_capacity(1024),
             proc_buffer: [0; PROC_BUFFER_SIZE],
             aux_buffer: [0; PROC_BUFFER_SIZE],
         }
@@ -107,12 +111,12 @@ pub fn init(state: &mut CollectorState) -> AuraResult<()> {
         state.telemetry.meta.os.os_type = aura_common::FixedString16::from_bytes(b"darwin");
     }
 
-    state.prev_timestamp_ns = monotonic_ns();
+    state.prev_timestamp_ns = aura_common::monotonic_ns();
     Ok(())
 }
 
 pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
-    let now = monotonic_ns();
+    let now = aura_common::monotonic_ns();
     let delta_secs = if state.prev_timestamp_ns == 0 {
         0.0
     } else {
@@ -165,7 +169,7 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let provider = crate::platform::provider()?;
+        let provider = crate::platform::macos::provider()?;
         state.telemetry.cpu = provider.cpu_stats()?;
         state.telemetry.memory = provider.memory_stats()?;
         state.telemetry.process = provider.process_stats()?;
@@ -179,10 +183,4 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
     state.telemetry.meta.timestamp_ns = now;
     state.prev_timestamp_ns = now;
     Ok(())
-}
-
-fn monotonic_ns() -> u64 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    let start = START.get_or_init(std::time::Instant::now);
-    start.elapsed().as_nanos() as u64
 }
