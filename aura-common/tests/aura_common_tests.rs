@@ -1,4 +1,4 @@
-use rkyv::Deserialize;
+use rkyv::{Archived, Deserialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aura_common::{
@@ -100,12 +100,12 @@ fn seqlock_writer_makes_version_odd_to_even() {
         core_count: 1,
     };
 
-    let bytes = rkyv::to_bytes::<CpuGlobalStat, 1024>(&cpu).unwrap();
+    let mut slot = std::mem::MaybeUninit::<Archived<CpuGlobalStat>>::zeroed();
 
     let initial = version.load(Ordering::SeqCst);
     assert_eq!(initial, 0);
 
-    unsafe { write_seqlock(&mut version, bytes.as_ptr() as *mut CpuGlobalStat, &cpu).unwrap() };
+    unsafe { write_seqlock(&mut version, slot.as_mut_ptr(), &cpu).unwrap() };
 
     let final_version = version.load(Ordering::SeqCst);
     assert_eq!(final_version, 2);
@@ -134,7 +134,7 @@ fn fixed_string_16_empty_string() {
 fn validate_freshness_fresh_data() {
     use aura_common::seqlock::validate_freshness;
 
-    let now = std::time::Instant::now().elapsed().as_nanos() as u64;
+    let now = aura_common::monotonic_ns();
     let threshold_ns = 5_000_000_000u64;
 
     let result = validate_freshness(now, threshold_ns);
@@ -145,7 +145,7 @@ fn validate_freshness_fresh_data() {
 fn validate_freshness_within_threshold() {
     use aura_common::seqlock::validate_freshness;
 
-    let now = std::time::Instant::now().elapsed().as_nanos() as u64;
+    let now = aura_common::monotonic_ns();
     let threshold_ns = 5_000_000_000u64;
 
     let result = validate_freshness(now, threshold_ns);

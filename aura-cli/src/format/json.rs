@@ -6,12 +6,19 @@ use crate::Module;
 #[derive(Serialize)]
 pub struct TelemetryJson {
     version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     cpu: Option<CpuGlobalStatJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     process: Option<ProcessStatsJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     memory: Option<MemoryStatsJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<StorageStatsJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     network: Option<NetworkStatsJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     meta: Option<MetaStatsJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     gpu: Option<GpuStatsJson>,
 }
 

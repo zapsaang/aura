@@ -2,6 +2,7 @@ pub mod archive;
 pub mod consts;
 pub mod error;
 pub mod seqlock;
+pub mod time;
 
 pub use archive::{
     CpuCoreStat, CpuGlobalStat, DiskStat, FixedString16, GpuStat, GpuStats, MemoryStats, MetaStats,
@@ -14,3 +15,4 @@ pub use consts::{
 };
 pub use error::{AuraError, AuraResult};
 pub use seqlock::{read_seqlock, validate_freshness, write_seqlock};
+pub use time::monotonic_ns;

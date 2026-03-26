@@ -110,6 +110,7 @@ version = "1.0.0"
 dependencies = [
  "crc32fast",
  "crossbeam-epoch",
+ "libc",
  "memmap2",
  "rand",
  "rkyv",

@@ -5,7 +5,8 @@ use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use aura_common::{
-    AuraError, AuraResult, TelemetryArchive, DATA_OFFSET, MAX_SPIN_WAIT_MS, SHM_FILE_MODE, SHM_SIZE,
+    monotonic_ns, AuraError, AuraResult, TelemetryArchive, DATA_OFFSET, MAX_SPIN_WAIT_MS,
+    SHM_FILE_MODE, SHM_SIZE,
 };
 use memmap2::{Mmap, MmapOptions};
 
@@ -72,7 +73,7 @@ impl TelemetryReader {
 
     pub fn is_fresh(&self, telemetry: &TelemetryArchive, threshold: Duration) -> bool {
         if telemetry.meta.timestamp_ns > 0 {
-            let now = std::time::Instant::now().elapsed().as_nanos() as u64;
+            let now = monotonic_ns();
             let age_ns = now.saturating_sub(telemetry.meta.timestamp_ns);
             let threshold_ns = threshold.as_nanos() as u64;
             if age_ns <= threshold_ns {

@@ -6,35 +6,35 @@ use super::{ansi, trim_zero_terminated};
 
 pub fn os_logo(os_id: &str, os_type: &str) -> &'static str {
     if os_type == "darwin" {
-        return "󰀛";
+        return ""; // Apple Logo (\uf302)
     }
 
     match os_id {
-        "ubuntu" => "󰏦",
-        "debian" => "󰔚",
-        "arch" => "󰣇",
-        "fedora" => "󰣛",
-        "rhel" | "centos" | "rocky" | "alma" => "󰎕",
-        "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" => "󰏓",
-        "gentoo" => "󰋊",
-        "alpine" => "󰎠",
-        "nixos" => "󰎣",
-        "void" => "󰎡",
-        "linuxmint" | "mint" => "󰜭",
-        "manjaro" => "󰌔",
-        "endeavouros" => "󰣵",
-        "pop" | "pop_os" => "󰣻",
-        "zorin" => "󰎾",
-        "kali" => "󰎮",
-        "raspbian" => "󰌺",
-        "ol" | "oracle" => "󰎚",
-        "amzn" => "󰌵",
-        "flatcar" => "󰎬",
-        "coreos" | "container-linux" => "󰎰",
-        "clearlinux" => "󰎄",
-        "photon" => "󰎹",
-        "sles" => "󰎞",
-        _ => "󰌺",
+        "ubuntu" => "", // \uf31b
+        "debian" => "", // \uf306
+        "arch" => "",   // \uf303
+        "fedora" => "", // \uf30a
+        "rhel" => "",   // \uf316
+        "centos" => "", // \uf304
+        "rocky" => "",  // \uf32b
+        "alma" => "",   // AlmaLinux
+        "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" => "", // \uf314
+        "gentoo" => "", // \uf30d
+        "alpine" => "", // \uf300
+        "nixos" => "",  // \uf313
+        "void" => "",   // \uf322
+        "linuxmint" | "mint" => "", // \uf30e
+        "manjaro" => "", // \uf312
+        "endeavouros" => "", // \uf323
+        "pop" | "pop_os" => "", // \uf32a
+        "zorin" => "",  // \uf32f
+        "kali" => "",   // \uf327
+        "raspbian" => "", // \uf315
+        "amzn" => "",   // Amazon (\uf270)
+        
+        "ol" | "oracle" | "flatcar" | "coreos" | "container-linux" | "clearlinux" | "photon" | "sles" => "", // \uf31a
+        
+        _ => "", 
     }
 }
 
