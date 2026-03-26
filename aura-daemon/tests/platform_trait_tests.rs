@@ -19,9 +19,9 @@ fn test_all_collector_modules_exist() {
     use aura_daemon::collectors::{cpu, disk, memory, network};
 
     let _ = (
-        std::any::type_name::<cpu::Collector>(),
-        std::any::type_name::<memory::Collector>(),
-        std::any::type_name::<disk::Collector>(),
-        std::any::type_name::<network::Collector>(),
+        cpu::collect,
+        memory::collect,
+        disk::collect,
+        network::collect,
     );
 }

@@ -147,22 +147,13 @@ fn timezone_info() -> ([u8; 8], i32) {
     unsafe {
         let now = libc::time(std::ptr::null_mut());
         let mut local_tm = std::mem::zeroed::<libc::tm>();
-        let mut utc_tm = std::mem::zeroed::<libc::tm>();
-        if libc::localtime_r(&now, &mut local_tm).is_null()
-            || libc::gmtime_r(&now, &mut utc_tm).is_null()
-        {
+        if libc::localtime_r(&now, &mut local_tm).is_null() {
             return (out, offset);
         }
 
-        let local_secs = tm_to_seconds(local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec);
-        let utc_secs = tm_to_seconds(utc_tm.tm_hour, utc_tm.tm_min, utc_tm.tm_sec);
-        offset = local_secs - utc_secs;
-
-        if offset > 14 * 3600 {
-            offset -= 24 * 3600;
-        } else if offset < -14 * 3600 {
-            offset += 24 * 3600;
-        }
+        // Use tm_gmtoff directly - it's set by localtime_r and handles
+        // UTC+12/13/14 correctly without manual day-boundary calculation
+        offset = local_tm.tm_gmtoff as i32;
 
         if !local_tm.tm_zone.is_null() {
             let cstr = std::ffi::CStr::from_ptr(local_tm.tm_zone);
@@ -173,12 +164,6 @@ fn timezone_info() -> ([u8; 8], i32) {
     }
 
     (out, offset)
-}
-
-fn tm_to_seconds(h: i32, m: i32, s: i32) -> i32 {
-    h.saturating_mul(3600)
-        .saturating_add(m.saturating_mul(60))
-        .saturating_add(s)
 }
 
 #[cfg(test)]

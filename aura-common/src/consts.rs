@@ -4,7 +4,11 @@ pub const SHM_PATH: &str = "/dev/shm/aura_state.dat";
 #[cfg(target_os = "macos")]
 pub const SHM_PATH: &str = "/tmp/aura_state.dat";
 
-pub const SHM_SIZE: usize = 65544;
+pub const HEADER_SIZE: usize = 16;
+pub const BUFFER_SIZE: usize = 65536;
+pub const BUFFER_0_OFFSET: usize = HEADER_SIZE;
+pub const BUFFER_1_OFFSET: usize = HEADER_SIZE + BUFFER_SIZE;
+pub const SHM_SIZE: usize = HEADER_SIZE + (2 * BUFFER_SIZE);
 
 /// SHM file permissions: world-readable/writable for cross-user IPC
 pub const SHM_FILE_MODE: u32 = 0o666;
@@ -13,7 +17,7 @@ pub const SHM_FILE_MODE: u32 = 0o666;
 pub const VERSION_OFFSET: usize = 0;
 
 /// Data offset in mmap (after version)
-pub const DATA_OFFSET: usize = 8;
+pub const DATA_OFFSET: usize = BUFFER_0_OFFSET;
 
 /// Default heartbeat interval in milliseconds
 pub const DEFAULT_HEARTBEAT_MS: u64 = 500;

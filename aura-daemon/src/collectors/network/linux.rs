@@ -10,27 +10,6 @@ use crate::collectors::NetByteSnapshot;
 
 static NETIF_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
 
-#[derive(Default)]
-pub struct LinuxNetworkCollector;
-
-impl LinuxNetworkCollector {
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-impl super::NetworkCollector for LinuxNetworkCollector {
-    fn collect(
-        &self,
-        buf: &mut [u8; 4096],
-        out: &mut NetworkStats,
-        prev: &mut NetByteSnapshot,
-        delta_secs: f32,
-    ) -> AuraResult<()> {
-        collect(buf, out, prev, delta_secs)
-    }
-}
-
 pub fn parse_net_dev(
     buf: &[u8],
     interfaces_out: &mut [NetIfStat; MAX_NETIFS],
@@ -98,14 +77,15 @@ pub fn parse_net_dev(
 }
 
 pub fn collect(
-    buf: &mut [u8; 4096],
+    buf: &mut Vec<u8>,
     out: &mut NetworkStats,
     prev: &mut NetByteSnapshot,
-    delta_secs: f32,
+    delta_secs: f64,
 ) -> AuraResult<()> {
+    buf.clear();
     let mut f = File::open("/proc/net/dev")?;
-    let n = f.read(buf)?;
-    parse_net_dev(&buf[..n], &mut out.interfaces, &mut out.if_count)?;
+    f.read_to_end(buf)?;
+    parse_net_dev(&buf[..], &mut out.interfaces, &mut out.if_count)?;
 
     let count = out.if_count as usize;
     let mut i = 0usize;
@@ -114,12 +94,12 @@ pub fn collect(
         let tx = out.interfaces[i].tx_bytes;
         let (prx, ptx) = prev.interfaces[i];
         out.interfaces[i].rx_bytes_per_sec = if delta_secs > 0.0 {
-            rx.saturating_sub(prx) as f32 / delta_secs
+            (rx.saturating_sub(prx) as f64 / delta_secs) as f32
         } else {
             0.0
         };
         out.interfaces[i].tx_bytes_per_sec = if delta_secs > 0.0 {
-            tx.saturating_sub(ptx) as f32 / delta_secs
+            (tx.saturating_sub(ptx) as f64 / delta_secs) as f32
         } else {
             0.0
         };

@@ -10,27 +10,6 @@ use crate::collectors::CpuTickSnapshot;
 
 static CORE_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
 
-#[derive(Default)]
-pub struct LinuxCpuCollector;
-
-impl LinuxCpuCollector {
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-impl super::CpuCollector for LinuxCpuCollector {
-    fn collect(
-        &self,
-        buf: &mut [u8; 4096],
-        out: &mut CpuGlobalStat,
-        prev: &mut CpuTickSnapshot,
-        delta_secs: f32,
-    ) -> AuraResult<()> {
-        collect(buf, out, prev, delta_secs)
-    }
-}
-
 pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
     let mut user = 0u64;
     let mut nice = 0u64;
@@ -127,7 +106,7 @@ pub fn parse_core_stats(
             idle_ticks: idle,
             total_ticks: total,
             usage_percent: if total > 0 {
-                ((total - idle) as f32 / total as f32) * 100.0
+                (((total - idle) as f64 / total as f64) * 100.0) as f32
             } else {
                 0.0
             },
@@ -150,14 +129,15 @@ pub fn parse_core_stats(
 }
 
 pub fn collect(
-    buf: &mut [u8; 4096],
+    buf: &mut Vec<u8>,
     out: &mut CpuGlobalStat,
     prev: &mut CpuTickSnapshot,
-    delta_secs: f32,
+    delta_secs: f64,
 ) -> AuraResult<()> {
+    buf.clear();
     let mut file = File::open("/proc/stat")?;
-    let n = file.read(buf)?;
-    let data = &buf[..n];
+    file.read_to_end(buf)?;
+    let data = &buf[..];
 
     let (user, system, idle, total, ctxt) = parse_cpu_stat(data)?;
 
@@ -177,12 +157,13 @@ pub fn collect(
     out.total_ticks = total;
     out.context_switches = ctxt;
     out.context_switches_per_sec = if delta_secs > 0.0 {
-        delta_ctxt as f32 / delta_secs
+        (delta_ctxt as f64 / delta_secs) as f32
     } else {
         0.0
     };
     out.usage_percent = if delta_total > 0 {
-        ((delta_total - delta_idle) as f32 / delta_total as f32) * 100.0
+        let busy = delta_total.saturating_sub(delta_idle);
+        ((busy as f64 / delta_total as f64) * 100.0) as f32
     } else {
         0.0
     };

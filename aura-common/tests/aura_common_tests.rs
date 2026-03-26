@@ -1,8 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-use aura_common::{
-    write_seqlock, CpuCoreStat, CpuGlobalStat, FixedString16, TelemetryArchive, MAX_CORES,
-};
+use aura_common::{CpuCoreStat, CpuGlobalStat, FixedString16, TelemetryArchive, MAX_CORES};
 
 #[test]
 fn fixed_string_16_from_bytes() {
@@ -79,47 +75,6 @@ fn telemetry_archive_zeroed() {
 }
 
 #[test]
-fn seqlock_writer_makes_version_odd_to_even() {
-    let mut version = AtomicUsize::new(0);
-
-    let cpu = CpuGlobalStat {
-        user_ticks: 100,
-        system_ticks: 50,
-        idle_ticks: 500,
-        total_ticks: 650,
-        context_switches: 10,
-        context_switches_per_sec: 5.0,
-        usage_percent: 23.08,
-        cores: [CpuCoreStat {
-            core_index: 0,
-            _pad0: [0; 7],
-            user_ticks: 100,
-            system_ticks: 50,
-            idle_ticks: 500,
-            total_ticks: 650,
-            usage_percent: 23.08,
-            _pad1: [0; 4],
-        }; MAX_CORES],
-        core_count: 1,
-        _pad0: [0; 7],
-    };
-
-    let mut slot = std::mem::MaybeUninit::<CpuGlobalStat>::zeroed();
-
-    let initial = version.load(Ordering::SeqCst);
-    assert_eq!(initial, 0);
-
-    unsafe { write_seqlock(&mut version, slot.as_mut_ptr(), &cpu).unwrap() };
-
-    let final_version = version.load(Ordering::SeqCst);
-    assert_eq!(final_version, 2);
-    assert!(
-        final_version.is_multiple_of(2),
-        "Version should be even after write completes"
-    );
-}
-
-#[test]
 fn fixed_string_16_all_bytes_accessible() {
     let s = FixedString16::from_bytes(b"abcdefghijklmnop");
     for i in 0..16 {
@@ -163,5 +118,42 @@ fn checksum_calculation_returns_value() {
     assert!(
         checksum != 0,
         "Checksum should return a value (zeroed has internal structure)"
+    );
+}
+
+#[test]
+fn shm_layout_constants_are_stable() {
+    use aura_common::{
+        TelemetryArchive, BUFFER_0_OFFSET, BUFFER_1_OFFSET, BUFFER_SIZE, DATA_OFFSET, HEADER_SIZE,
+        SHM_SIZE,
+    };
+    use std::mem::size_of;
+
+    let archive_size = size_of::<TelemetryArchive>();
+
+    assert_eq!(
+        SHM_SIZE, 131088,
+        "SHM_SIZE = header(16) + 2*buffer(65536) for double-buffered IPC."
+    );
+    assert_eq!(
+        HEADER_SIZE, 16,
+        "Header is active_index + write_seq (2x u64)"
+    );
+    assert_eq!(BUFFER_SIZE, 65536, "Each buffer holds one TelemetryArchive");
+    assert_eq!(
+        BUFFER_0_OFFSET, 16,
+        "Buffer 0 begins immediately after header"
+    );
+    assert_eq!(
+        BUFFER_1_OFFSET, 65552,
+        "Buffer 1 begins immediately after buffer 0"
+    );
+    assert_eq!(
+        DATA_OFFSET, BUFFER_0_OFFSET,
+        "DATA_OFFSET aliases primary buffer start for compatibility."
+    );
+    assert_eq!(
+        archive_size, 65536,
+        "TelemetryArchive must fit in 64KB for mmap efficiency."
     );
 }

@@ -28,7 +28,7 @@ pub fn run(
             error!("collector error: {e}");
         }
 
-        if let Err(e) = shm.write(&collector_state.telemetry) {
+        if let Err(e) = shm.write(&mut collector_state.telemetry) {
             error!("seqlock write error: {e}");
         }
 

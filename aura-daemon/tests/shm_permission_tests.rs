@@ -39,22 +39,24 @@ fn shm_created_with_world_readable_permissions() {
 #[cfg(target_os = "linux")]
 #[test]
 #[serial]
-fn shm_repairs_preexisting_restrictive_permissions() {
+fn shm_rejects_wrong_permissions() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("aura_preexist.dat");
 
     std::fs::write(&path, vec![0u8; SHM_SIZE]).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
-    let _handle = ShmHandle::new(&path).unwrap();
-
-    let perms = std::fs::metadata(&path).unwrap().permissions();
-    assert_eq!(
-        perms.mode() & 0o777,
-        0o666,
-        "SHM must repair pre-existing 0o600 to 0o666, got {:#o}",
-        perms.mode() & 0o777
-    );
+    match ShmHandle::new(&path) {
+        Ok(_) => panic!("Should reject wrong permissions"),
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("SHM has mode"),
+                "Error should mention wrong mode, got: {}",
+                msg
+            );
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]

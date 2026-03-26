@@ -9,28 +9,6 @@ use aura_common::{
 use crate::collectors::parsing::{parse_u64, split_whitespace};
 use crate::collectors::DiskSectorSnapshot;
 
-#[derive(Default)]
-pub struct LinuxDiskCollector;
-
-impl LinuxDiskCollector {
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-impl super::DiskCollector for LinuxDiskCollector {
-    fn collect(
-        &self,
-        diskstats_buf: &mut [u8; 4096],
-        mounts_buf: &mut [u8; 4096],
-        out: &mut StorageStats,
-        prev: &mut DiskSectorSnapshot,
-        delta_secs: f32,
-    ) -> AuraResult<()> {
-        collect(diskstats_buf, mounts_buf, out, prev, delta_secs)
-    }
-}
-
 pub fn parse_diskstats(
     buf: &[u8],
     disks_out: &mut [DiskStat; MAX_DISKS],
@@ -165,7 +143,7 @@ fn get_fs_stats(mountpoint: &[u8]) -> (u64, u64, u64, f32) {
     let available = (s.f_bavail as u64).saturating_mul(frsize);
     let used = total.saturating_sub(available);
     let percent = if total > 0 {
-        (used as f32 / total as f32) * 100.0
+        ((used as f64 / total as f64) * 100.0) as f32
     } else {
         0.0
     };
@@ -173,19 +151,21 @@ fn get_fs_stats(mountpoint: &[u8]) -> (u64, u64, u64, f32) {
 }
 
 pub fn collect(
-    diskstats_buf: &mut [u8; 4096],
-    mounts_buf: &mut [u8; 4096],
+    diskstats_buf: &mut Vec<u8>,
+    mounts_buf: &mut Vec<u8>,
     out: &mut StorageStats,
     prev: &mut DiskSectorSnapshot,
-    delta_secs: f32,
+    delta_secs: f64,
 ) -> AuraResult<()> {
+    diskstats_buf.clear();
     let mut f = File::open("/proc/diskstats")?;
-    let n = f.read(diskstats_buf)?;
-    parse_diskstats(&diskstats_buf[..n], &mut out.disks, &mut out.disk_count)?;
+    f.read_to_end(diskstats_buf)?;
+    parse_diskstats(&diskstats_buf[..], &mut out.disks, &mut out.disk_count)?;
 
+    mounts_buf.clear();
     let mut f2 = File::open("/proc/mounts")?;
-    let n2 = f2.read(mounts_buf)?;
-    parse_mounts(&mounts_buf[..n2], &mut out.mounts, &mut out.mount_count)?;
+    f2.read_to_end(mounts_buf)?;
+    parse_mounts(&mounts_buf[..], &mut out.mounts, &mut out.mount_count)?;
 
     let count = out.disk_count as usize;
     let mut i = 0usize;
@@ -194,12 +174,12 @@ pub fn collect(
         let wx = out.disks[i].wx_bytes;
         let (prx, pwx) = prev.devices[i];
         out.disks[i].rx_per_sec = if delta_secs > 0.0 {
-            rx.saturating_sub(prx) as f32 / delta_secs
+            (rx.saturating_sub(prx) as f64 / delta_secs) as f32
         } else {
             0.0
         };
         out.disks[i].wx_per_sec = if delta_secs > 0.0 {
-            wx.saturating_sub(pwx) as f32 / delta_secs
+            (wx.saturating_sub(pwx) as f64 / delta_secs) as f32
         } else {
             0.0
         };

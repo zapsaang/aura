@@ -9,18 +9,12 @@ pub mod parsing;
 pub mod process;
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 use aura_common::{
-    AuraError, AuraResult, TelemetryArchive, MAX_DISKS, MAX_NETIFS, MIN_DELTA_NS, PROC_BUFFER_SIZE,
+    AuraResult, TelemetryArchive, MAX_DISKS, MAX_NETIFS, MIN_DELTA_NS, PROC_BUFFER_SIZE,
 };
 
-const NS_PER_SEC: f32 = 1_000_000_000.0;
-
-static CPU_COLLECTOR: OnceLock<Box<dyn cpu::CpuCollector>> = OnceLock::new();
-static MEMORY_COLLECTOR: OnceLock<Box<dyn memory::MemoryCollector>> = OnceLock::new();
-static DISK_COLLECTOR: OnceLock<Box<dyn disk::DiskCollector>> = OnceLock::new();
-static NETWORK_COLLECTOR: OnceLock<Box<dyn network::NetworkCollector>> = OnceLock::new();
+const NS_PER_SEC: f64 = 1_000_000_000.0;
 
 #[derive(Clone, Copy)]
 pub struct CpuTickSnapshot {
@@ -83,8 +77,8 @@ pub struct CollectorState {
     pub prev_proc_total_ticks: u64,
     pub prev_proc_ticks: HashMap<u32, u64>,
     pub proc_fd_cache: process::ProcFdCache,
-    pub proc_buffer: [u8; PROC_BUFFER_SIZE],
-    pub aux_buffer: [u8; PROC_BUFFER_SIZE],
+    pub proc_buffer: Vec<u8>,
+    pub aux_buffer: Vec<u8>,
 }
 
 impl CollectorState {
@@ -99,8 +93,8 @@ impl CollectorState {
             prev_proc_total_ticks: 0,
             prev_proc_ticks: HashMap::with_capacity(1024),
             proc_fd_cache: process::ProcFdCache::new(),
-            proc_buffer: [0; PROC_BUFFER_SIZE],
-            aux_buffer: [0; PROC_BUFFER_SIZE],
+            proc_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
+            aux_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
         }
     }
 }
@@ -124,8 +118,6 @@ pub fn init(state: &mut CollectorState) -> AuraResult<()> {
         state.telemetry.meta.os.os_type = aura_common::FixedString16::from_bytes(b"darwin");
     }
 
-    init_platform_collectors();
-
     state.prev_timestamp_ns = aura_common::monotonic_ns();
     Ok(())
 }
@@ -134,7 +126,7 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
     let now = aura_common::monotonic_ns();
     let raw_delta_ns = now.saturating_sub(state.prev_timestamp_ns);
 
-    let delta_secs = if state.prev_timestamp_ns == 0 {
+    let delta_secs: f64 = if state.prev_timestamp_ns == 0 {
         0.0
     } else if raw_delta_ns < MIN_DELTA_NS {
         log::warn!(
@@ -142,12 +134,12 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
             raw_delta_ns,
             MIN_DELTA_NS
         );
-        MIN_DELTA_NS as f32 / NS_PER_SEC
+        MIN_DELTA_NS as f64 / NS_PER_SEC
     } else {
-        raw_delta_ns as f32 / NS_PER_SEC
+        raw_delta_ns as f64 / NS_PER_SEC
     };
 
-    cpu_collector()?.collect(
+    cpu::collect(
         &mut state.proc_buffer,
         &mut state.telemetry.cpu,
         &mut state.prev_cpu_ticks,
@@ -156,7 +148,7 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
 
     collect_process(state)?;
 
-    memory_collector()?.collect(
+    memory::collect(
         &mut state.proc_buffer,
         &mut state.aux_buffer,
         &mut state.telemetry.memory,
@@ -164,7 +156,7 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
         delta_secs,
     )?;
 
-    disk_collector()?.collect(
+    disk::collect(
         &mut state.proc_buffer,
         &mut state.aux_buffer,
         &mut state.telemetry.storage,
@@ -172,62 +164,18 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
         delta_secs,
     )?;
 
-    network_collector()?.collect(
+    network::collect(
         &mut state.proc_buffer,
         &mut state.telemetry.network,
         &mut state.prev_net_bytes,
         delta_secs,
     )?;
 
-    collect_meta(state)?;
-    collect_gpu(state)?;
+    collect_meta_and_gpu(state)?;
 
     state.telemetry.meta.timestamp_ns = now;
     state.prev_timestamp_ns = now;
     Ok(())
-}
-
-fn cpu_collector() -> AuraResult<&'static dyn cpu::CpuCollector> {
-    CPU_COLLECTOR
-        .get()
-        .map(|c| c.as_ref())
-        .ok_or_else(|| AuraError::PlatformNotSupported("cpu collector not initialized".to_string()))
-}
-
-fn memory_collector() -> AuraResult<&'static dyn memory::MemoryCollector> {
-    MEMORY_COLLECTOR.get().map(|c| c.as_ref()).ok_or_else(|| {
-        AuraError::PlatformNotSupported("memory collector not initialized".to_string())
-    })
-}
-
-fn disk_collector() -> AuraResult<&'static dyn disk::DiskCollector> {
-    DISK_COLLECTOR.get().map(|c| c.as_ref()).ok_or_else(|| {
-        AuraError::PlatformNotSupported("disk collector not initialized".to_string())
-    })
-}
-
-fn network_collector() -> AuraResult<&'static dyn network::NetworkCollector> {
-    NETWORK_COLLECTOR.get().map(|c| c.as_ref()).ok_or_else(|| {
-        AuraError::PlatformNotSupported("network collector not initialized".to_string())
-    })
-}
-
-fn init_platform_collectors() {
-    #[cfg(target_os = "linux")]
-    {
-        let _ = CPU_COLLECTOR.set(Box::new(cpu::linux::LinuxCpuCollector::new()));
-        let _ = MEMORY_COLLECTOR.set(Box::new(memory::linux::LinuxMemoryCollector::new()));
-        let _ = DISK_COLLECTOR.set(Box::new(disk::linux::LinuxDiskCollector::new()));
-        let _ = NETWORK_COLLECTOR.set(Box::new(network::linux::LinuxNetworkCollector::new()));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = CPU_COLLECTOR.set(Box::new(cpu::macos::MacosCpuCollector));
-        let _ = MEMORY_COLLECTOR.set(Box::new(memory::macos::MacosMemoryCollector));
-        let _ = DISK_COLLECTOR.set(Box::new(disk::macos::MacosDiskCollector));
-        let _ = NETWORK_COLLECTOR.set(Box::new(network::macos::MacosNetworkCollector));
-    }
 }
 
 fn collect_process(state: &mut CollectorState) -> AuraResult<()> {
@@ -253,23 +201,10 @@ fn collect_process(state: &mut CollectorState) -> AuraResult<()> {
     Ok(())
 }
 
-fn collect_meta(state: &mut CollectorState) -> AuraResult<()> {
+fn collect_meta_and_gpu(state: &mut CollectorState) -> AuraResult<()> {
     #[cfg(target_os = "linux")]
     {
         meta::collect(&mut state.telemetry.meta)?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = state;
-    }
-
-    Ok(())
-}
-
-fn collect_gpu(state: &mut CollectorState) -> AuraResult<()> {
-    #[cfg(target_os = "linux")]
-    {
         gpu::collect_nvml(&mut state.telemetry.gpu)?;
     }
 

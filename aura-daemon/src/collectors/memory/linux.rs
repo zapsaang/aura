@@ -3,28 +3,6 @@ use std::io::Read;
 
 use aura_common::{AuraResult, MemoryStats};
 
-#[derive(Default)]
-pub struct LinuxMemoryCollector;
-
-impl LinuxMemoryCollector {
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-impl super::MemoryCollector for LinuxMemoryCollector {
-    fn collect(
-        &self,
-        meminfo_buf: &mut [u8; 4096],
-        vmstat_buf: &mut [u8; 4096],
-        out: &mut MemoryStats,
-        prev_page_faults: &mut u64,
-        delta_secs: f32,
-    ) -> AuraResult<()> {
-        collect(meminfo_buf, vmstat_buf, out, prev_page_faults, delta_secs)
-    }
-}
-
 pub fn parse_meminfo(buf: &[u8]) -> MemoryStats {
     let mut stats = MemoryStats {
         ram_total: 0,
@@ -89,23 +67,25 @@ pub fn parse_vmstat_page_faults(buf: &[u8]) -> u64 {
 }
 
 pub fn collect(
-    meminfo_buf: &mut [u8; 4096],
-    vmstat_buf: &mut [u8; 4096],
+    meminfo_buf: &mut Vec<u8>,
+    vmstat_buf: &mut Vec<u8>,
     out: &mut MemoryStats,
     prev_page_faults: &mut u64,
-    delta_secs: f32,
+    delta_secs: f64,
 ) -> AuraResult<()> {
+    meminfo_buf.clear();
     let mut meminfo = File::open("/proc/meminfo")?;
-    let n = meminfo.read(meminfo_buf)?;
-    let mut stats = parse_meminfo(&meminfo_buf[..n]);
+    meminfo.read_to_end(meminfo_buf)?;
+    let mut stats = parse_meminfo(&meminfo_buf[..]);
 
+    vmstat_buf.clear();
     let mut vmstat = File::open("/proc/vmstat")?;
-    let n2 = vmstat.read(vmstat_buf)?;
-    stats.page_faults = parse_vmstat_page_faults(&vmstat_buf[..n2]);
+    vmstat.read_to_end(vmstat_buf)?;
+    stats.page_faults = parse_vmstat_page_faults(&vmstat_buf[..]);
 
     let delta_faults = stats.page_faults.saturating_sub(*prev_page_faults);
     stats.page_faults_per_sec = if delta_secs > 0.0 {
-        delta_faults as f32 / delta_secs
+        (delta_faults as f64 / delta_secs) as f32
     } else {
         0.0
     };

@@ -1,15 +1,15 @@
 use std::fs::OpenOptions;
-use std::io::ErrorKind;
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
-use std::sync::atomic::AtomicUsize;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use memmap2::{MmapMut, MmapOptions};
 
 use aura_common::{
-    AuraError, AuraResult, SeqLockWriterGuard, TelemetryArchive, DATA_OFFSET, SHM_FILE_MODE,
-    SHM_SIZE,
+    write_double_buffer, AuraError, AuraResult, TelemetryArchive, SHM_FILE_MODE, SHM_SIZE,
 };
 
 pub struct ShmHandle {
@@ -29,6 +29,93 @@ impl ShmHandle {
             )));
         }
 
+        if path.exists() {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(path)?;
+
+            #[cfg(unix)]
+            {
+                let fd = file.as_raw_fd();
+                let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::uninit();
+                if unsafe { libc::fstat(fd, stat_buf.as_mut_ptr()) } != 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                let stat = unsafe { stat_buf.assume_init() };
+
+                if stat.st_uid != unsafe { libc::geteuid() } {
+                    return Err(AuraError::Security(format!(
+                        "SHM owned by uid {}, expected {}",
+                        stat.st_uid,
+                        unsafe { libc::geteuid() }
+                    )));
+                }
+
+                let mode = stat.st_mode & 0o777;
+                if mode != SHM_FILE_MODE {
+                    return Err(AuraError::Security(format!(
+                        "SHM has mode {:o}, expected {:o}",
+                        mode, SHM_FILE_MODE
+                    )));
+                }
+
+                if stat.st_size != SHM_SIZE as i64 {
+                    return Err(AuraError::Security(format!(
+                        "SHM size {} != expected {}",
+                        stat.st_size, SHM_SIZE
+                    )));
+                }
+
+                if (stat.st_mode & libc::S_IFMT) != libc::S_IFREG {
+                    return Err(AuraError::Security("SHM is not a regular file".into()));
+                }
+
+                let rc = unsafe { libc::fchmod(fd, SHM_FILE_MODE as libc::mode_t) };
+                if rc != 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+
+                let rc = unsafe { libc::ftruncate(fd, SHM_SIZE as libc::off_t) };
+                if rc != 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+            }
+
+            #[cfg(not(unix))]
+            file.set_len(SHM_SIZE as u64)?;
+
+            let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
+            return Ok(Self { mmap });
+        }
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let tmp_path = path.with_extension(format!("tmp.{}.{}", std::process::id(), nonce));
+
+        if tmp_path.exists() {
+            std::fs::remove_file(&tmp_path)?;
+        }
+
+        if let Some(parent) = path.parent() {
+            let tmp_prefix = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("aura_state");
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if name.starts_with(&format!("{}.tmp.", tmp_prefix)) {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
+        }
+
         let mut opts = OpenOptions::new();
         opts.read(true).write(true).create_new(true);
         #[cfg(unix)]
@@ -37,84 +124,38 @@ impl ShmHandle {
             opts.custom_flags(libc::O_NOFOLLOW);
         }
 
-        let file = match opts.open(path) {
-            Ok(file) => {
-                // create_new succeeded — set permissions to exact value (umask-independent)
-                // This has a tiny TOCTOU window but O_NOFOLLOW on the open above
-                // prevents symlink exploitation at open time.
-                #[cfg(unix)]
-                {
-                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(SHM_FILE_MODE))?;
-                }
-                file
-            }
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-                validate_existing_shm(path)?;
+        let file = opts.open(&tmp_path)?;
 
-                let mut opts2 = OpenOptions::new();
-                opts2.read(true).write(true);
-                #[cfg(unix)]
-                {
-                    opts2.custom_flags(libc::O_NOFOLLOW);
-                }
-                let file = opts2.open(path)?;
-                // Repair permissions if they were wrong (daemon restarting with existing SHM)
-                #[cfg(unix)]
-                {
-                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(SHM_FILE_MODE))?;
-                }
-                file
+        #[cfg(unix)]
+        {
+            let fd = file.as_raw_fd();
+            let rc = unsafe { libc::fchmod(fd, SHM_FILE_MODE as libc::mode_t) };
+            if rc != 0 {
+                return Err(std::io::Error::last_os_error().into());
             }
-            Err(err) => return Err(err.into()),
-        };
 
+            let rc = unsafe { libc::ftruncate(fd, SHM_SIZE as libc::off_t) };
+            if rc != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
+
+        #[cfg(not(unix))]
         file.set_len(SHM_SIZE as u64)?;
+
+        std::fs::rename(&tmp_path, path)?;
 
         let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
 
         Ok(Self { mmap })
     }
 
-    pub fn write(&mut self, telemetry: &TelemetryArchive) -> AuraResult<()> {
-        let base = self.mmap.as_mut_ptr();
-        let version_ptr = unsafe { &*(base as *const AtomicUsize) };
-        let guard = SeqLockWriterGuard::begin(version_ptr);
-
-        let dst = unsafe { base.add(DATA_OFFSET) };
-        let src = telemetry as *const TelemetryArchive as *const u8;
-        let len = std::mem::size_of::<TelemetryArchive>();
+    pub fn write(&mut self, telemetry: &mut TelemetryArchive) -> AuraResult<()> {
+        telemetry.checksum = 0;
+        telemetry.checksum = telemetry.calculate_checksum();
         unsafe {
-            std::ptr::copy_nonoverlapping(src, dst, len);
+            write_double_buffer(self.mmap.as_mut_ptr(), telemetry);
         }
-
-        guard.complete();
         Ok(())
     }
-}
-
-fn validate_existing_shm(path: &Path) -> AuraResult<()> {
-    if path.is_symlink() {
-        return Err(AuraError::Security(format!(
-            "refusing to open symlink for shared memory: {}",
-            path.display()
-        )));
-    }
-
-    #[cfg(unix)]
-    {
-        let metadata = std::fs::metadata(path)?;
-        let owner_uid = metadata.uid();
-        let current_uid = unsafe { libc::geteuid() };
-        if owner_uid != current_uid {
-            return Err(AuraError::Security(format!(
-                "shared memory file owner mismatch for {}: uid {} != {}",
-                path.display(),
-                owner_uid,
-                current_uid
-            )));
-        }
-        // Note: permission check omitted here — fallback path repairs permissions after open
-    }
-
-    Ok(())
 }

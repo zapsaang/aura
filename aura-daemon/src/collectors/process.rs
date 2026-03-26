@@ -92,7 +92,7 @@ impl Default for ProcFdCache {
 }
 
 pub fn collect_top_n(
-    buf: &mut [u8; aura_common::PROC_BUFFER_SIZE],
+    buf: &mut Vec<u8>,
     out: &mut ProcessStats,
     prev_proc_ticks: &mut HashMap<u32, u64>,
     prev_total_ticks: &mut u64,
@@ -111,7 +111,7 @@ pub fn collect_top_n(
     let mut active_pids = HashSet::with_capacity(prev_proc_ticks.len());
 
     let global_delta = current_total_ticks.saturating_sub(*prev_total_ticks);
-    let ncores = core_count.max(1) as f32;
+    let ncores = core_count.max(1) as f64;
 
     for entry in read_dir("/proc")? {
         let entry = match entry {
@@ -139,12 +139,12 @@ pub fn collect_top_n(
             continue;
         }
 
-        let n = match file.read(buf) {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
+        buf.clear();
+        if file.read_to_end(buf).is_err() {
+            continue;
+        }
 
-        let (proc_pid, comm, utime, stime, rss, state) = match parse_proc_stat(&buf[..n]) {
+        let (proc_pid, comm, utime, stime, rss, state) = match parse_proc_stat(&buf[..]) {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -163,7 +163,7 @@ pub fn collect_top_n(
         current_proc_ticks.insert(pid, curr_ticks);
 
         let cpu_percent = if global_delta > 0 {
-            (delta_proc as f32 * ncores / global_delta as f32) * 100.0
+            ((delta_proc as f64 * ncores / global_delta as f64) * 100.0) as f32
         } else {
             0.0
         };

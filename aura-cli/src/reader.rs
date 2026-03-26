@@ -1,13 +1,10 @@
 use std::fs::OpenOptions;
-use std::hint::spin_loop;
-use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{fence, AtomicUsize, Ordering};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use aura_common::{
-    monotonic_ns, AuraError, AuraResult, TelemetryArchive, DATA_OFFSET, MAX_SPIN_WAIT_MS,
-    SHM_FILE_MODE, SHM_SIZE,
+    monotonic_ns, read_double_buffer, AuraError, AuraResult, TelemetryArchive, SHM_FILE_MODE,
+    SHM_SIZE,
 };
 use memmap2::{Mmap, MmapOptions};
 
@@ -28,6 +25,16 @@ impl TelemetryReader {
                 AuraError::SharedMemory(e)
             }
         })?;
+
+        let meta = file.metadata()?;
+        if meta.len() != SHM_SIZE as u64 {
+            return Err(AuraError::MmapFailed(format!(
+                "incompatible shm size {} (expected {})",
+                meta.len(),
+                SHM_SIZE
+            )));
+        }
+
         let mmap = unsafe {
             MmapOptions::new()
                 .len(SHM_SIZE)
@@ -41,43 +48,20 @@ impl TelemetryReader {
     }
 
     pub fn read(&self) -> AuraResult<TelemetryArchive> {
-        let version_ptr = self.version_ptr();
-        let data_ptr = self.data_ptr::<TelemetryArchive>();
-        let timeout = Duration::from_millis(MAX_SPIN_WAIT_MS);
-        let start = Instant::now();
+        let mut snapshot = unsafe {
+            read_double_buffer(self.mmap.as_ptr()).map_err(|()| AuraError::SeqLockInvalid)?
+        };
 
-        loop {
-            let v1 = unsafe { (*version_ptr).load(Ordering::SeqCst) };
+        let expected = snapshot.checksum;
+        snapshot.checksum = 0;
+        let actual = snapshot.calculate_checksum();
+        snapshot.checksum = expected;
 
-            if v1 & 1 == 1 {
-                if start.elapsed() > timeout {
-                    return Err(AuraError::SeqLockInvalid);
-                }
-                spin_loop();
-                continue;
-            }
-
-            let mut buf: MaybeUninit<TelemetryArchive> = MaybeUninit::uninit();
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    data_ptr as *const u8,
-                    buf.as_mut_ptr() as *mut u8,
-                    std::mem::size_of::<TelemetryArchive>(),
-                );
-            }
-
-            fence(Ordering::Acquire);
-
-            let v2 = unsafe { (*version_ptr).load(Ordering::SeqCst) };
-            if v1 == v2 && v2 & 1 == 0 {
-                let snapshot = unsafe { buf.assume_init() };
-                return Ok(snapshot);
-            }
-
-            if start.elapsed() > timeout {
-                return Err(AuraError::SeqLockInvalid);
-            }
+        if expected != actual {
+            return Err(AuraError::ChecksumMismatch { expected, actual });
         }
+
+        Ok(snapshot)
     }
 
     pub fn is_fresh(&self, telemetry: &TelemetryArchive, threshold: Duration) -> bool {
@@ -105,41 +89,29 @@ impl TelemetryReader {
         };
         elapsed <= threshold
     }
-
-    #[inline]
-    fn version_ptr(&self) -> *const AtomicUsize {
-        self.mmap.as_ptr() as *const AtomicUsize
-    }
-
-    #[inline]
-    fn data_ptr<T>(&self) -> *const T {
-        unsafe { self.mmap.as_ptr().add(DATA_OFFSET).cast::<T>() }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs::OpenOptions;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use aura_common::{
-        CpuCoreStat, CpuGlobalStat, FixedString16, GpuStat, GpuStats, MemoryStats, MetaStats,
-        NetIfStat, NetworkStats, OsFingerprint, ProcessStat, ProcessStats, StorageStats,
-        TelemetryArchive, DATA_OFFSET, MAX_CORES, MAX_DISKS, MAX_MOUNTS, MAX_NETIFS, MAX_TOP_N,
-        SHM_SIZE,
+        write_double_buffer, AuraError, CpuCoreStat, CpuGlobalStat, DoubleBufferHeader,
+        FixedString16, GpuStat, GpuStats, MemoryStats, MetaStats, NetIfStat, NetworkStats,
+        OsFingerprint, ProcessStat, ProcessStats, StorageStats, TelemetryArchive, BUFFER_0_OFFSET,
+        BUFFER_1_OFFSET, MAX_CORES, MAX_DISKS, MAX_MOUNTS, MAX_NETIFS, MAX_TOP_N, SHM_SIZE,
     };
     use memmap2::MmapOptions;
 
     use super::TelemetryReader;
 
     #[test]
-    fn read_returns_snapshot_when_version_even_and_stable() {
+    fn read_returns_snapshot_from_active_buffer() {
         let path = temp_shm_path("stable");
         let mut mmap = init_shm_file(&path);
         let telemetry = sample_telemetry(44.5);
-        write_snapshot(&mut mmap, 2, &telemetry);
+        write_snapshot(&mut mmap, &telemetry);
 
         let reader = TelemetryReader::new(&path).unwrap();
         let out = reader.read().unwrap();
@@ -149,30 +121,35 @@ mod tests {
     }
 
     #[test]
-    fn read_retries_while_writer_marks_odd_version() {
-        let path = temp_shm_path("retry");
+    fn read_returns_checksum_mismatch_for_corrupt_active_buffer() {
+        let path = temp_shm_path("checksum");
         let mut mmap = init_shm_file(&path);
-        write_snapshot(&mut mmap, 1, &sample_telemetry(10.0));
+        write_snapshot(&mut mmap, &sample_telemetry(10.0));
 
-        let path_for_thread = path.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(2));
-            let mut mmap = init_existing_map(&path_for_thread);
-            let base = mmap.as_mut_ptr();
-            let version_ptr = base as *mut AtomicUsize;
-            unsafe {
-                (*version_ptr).store(3, Ordering::SeqCst);
-                let dst = base.add(DATA_OFFSET) as *mut TelemetryArchive;
-                std::ptr::write_unaligned(dst, sample_telemetry(55.0));
-                (*version_ptr).store(4, Ordering::SeqCst);
-            }
-            mmap.flush().unwrap();
-        });
+        let base = mmap.as_mut_ptr();
+        let header = unsafe { &*(base as *const DoubleBufferHeader) };
+        let active_offset = if header
+            .active_index
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == 0
+        {
+            BUFFER_0_OFFSET
+        } else {
+            BUFFER_1_OFFSET
+        };
+        unsafe {
+            let checksum_ptr = base
+                .add(active_offset + std::mem::offset_of!(TelemetryArchive, checksum))
+                .cast::<u32>();
+            *checksum_ptr = 0;
+        }
+        mmap.flush().unwrap();
 
         let reader = TelemetryReader::new(&path).unwrap();
-        let out = reader.read().unwrap();
-
-        assert_eq!(out.cpu.usage_percent, 55.0);
+        match reader.read() {
+            Ok(_) => panic!("expected checksum mismatch"),
+            Err(err) => assert!(matches!(err, AuraError::ChecksumMismatch { .. })),
+        }
         cleanup(&path);
     }
 
@@ -180,7 +157,7 @@ mod tests {
     fn freshness_uses_file_mtime_fallback() {
         let path = temp_shm_path("fresh");
         let mut mmap = init_shm_file(&path);
-        write_snapshot(&mut mmap, 2, &sample_telemetry(20.0));
+        write_snapshot(&mut mmap, &sample_telemetry(20.0));
 
         let reader = TelemetryReader::new(&path).unwrap();
         let stale = sample_telemetry(20.0);
@@ -209,22 +186,11 @@ mod tests {
         unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() }
     }
 
-    fn init_existing_map(path: &std::path::Path) -> memmap2::MmapMut {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .unwrap();
-        unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() }
-    }
-
-    fn write_snapshot(mmap: &mut memmap2::MmapMut, version: usize, telemetry: &TelemetryArchive) {
-        let base = mmap.as_mut_ptr();
-        let version_ptr = base as *mut AtomicUsize;
+    fn write_snapshot(mmap: &mut memmap2::MmapMut, telemetry: &TelemetryArchive) {
+        let mut t = *telemetry;
+        t.checksum = t.calculate_checksum();
         unsafe {
-            (*version_ptr).store(version, Ordering::SeqCst);
-            let dst = base.add(DATA_OFFSET) as *mut TelemetryArchive;
-            std::ptr::write_unaligned(dst, *telemetry);
+            write_double_buffer(mmap.as_mut_ptr(), &t);
         }
         mmap.flush().unwrap();
     }

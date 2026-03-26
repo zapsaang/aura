@@ -6,21 +6,6 @@ use aura_common::{
 
 use crate::collectors::DiskSectorSnapshot;
 
-pub struct MacosDiskCollector;
-
-impl super::DiskCollector for MacosDiskCollector {
-    fn collect(
-        &self,
-        _diskstats_buf: &mut [u8; 4096],
-        _mounts_buf: &mut [u8; 4096],
-        out: &mut StorageStats,
-        prev: &mut DiskSectorSnapshot,
-        delta_secs: f32,
-    ) -> AuraResult<()> {
-        collect_macos(out, prev, delta_secs)
-    }
-}
-
 fn should_skip_mount(mountpoint: &[u8], fstype: &[u8]) -> bool {
     mountpoint.starts_with(b"/dev")
         || mountpoint.starts_with(b"/net")
@@ -39,10 +24,12 @@ fn disk_name_from_device(device: &[u8]) -> &[u8] {
     }
 }
 
-pub fn collect_macos(
+pub fn collect(
+    _diskstats_buf: &mut Vec<u8>,
+    _mounts_buf: &mut Vec<u8>,
     out: &mut StorageStats,
     prev: &mut DiskSectorSnapshot,
-    _delta_secs: f32,
+    _delta_secs: f64,
 ) -> AuraResult<()> {
     out.disk_count = 0;
     out.mount_count = 0;
@@ -134,7 +121,7 @@ fn get_fs_stats(mountpoint: &[u8]) -> (u64, u64, u64, f32) {
     let available = (s.f_bavail as u64).saturating_mul(frsize);
     let used = total.saturating_sub(available);
     let percent = if total > 0 {
-        (used as f32 / total as f32) * 100.0
+        ((used as f64 / total as f64) * 100.0) as f32
     } else {
         0.0
     };
