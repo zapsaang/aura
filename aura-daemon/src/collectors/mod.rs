@@ -108,6 +108,7 @@ pub fn init(state: &mut CollectorState) -> AuraResult<()> {
 
     #[cfg(target_os = "macos")]
     {
+        crate::platform::macos::init()?;
         state.telemetry.meta.os.os_type = aura_common::FixedString16::from_bytes(b"darwin");
     }
 

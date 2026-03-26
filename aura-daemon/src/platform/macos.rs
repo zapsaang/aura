@@ -656,4 +656,16 @@ mod tests {
         assert!(mem.ram_total >= mem.ram_free);
         assert!(proc.total <= u32::MAX);
     }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn init_then_provider_returns_same_instance() {
+        let p1 = crate::platform::macos::init().expect("init should succeed");
+        let p2 = crate::platform::macos::provider().expect("provider should return Ok after init");
+
+        assert!(
+            std::ptr::eq(p1 as *const _, p2 as *const _),
+            "provider() should return the same instance initialized by init()"
+        );
+    }
 }
