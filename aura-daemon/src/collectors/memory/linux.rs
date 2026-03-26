@@ -3,6 +3,7 @@ use std::io::Read;
 
 use aura_common::{AuraResult, MemoryStats};
 
+#[derive(Default)]
 pub struct LinuxMemoryCollector;
 
 impl LinuxMemoryCollector {

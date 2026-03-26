@@ -9,6 +9,7 @@ use aura_common::{
 use crate::collectors::parsing::{parse_u64, split_whitespace};
 use crate::collectors::DiskSectorSnapshot;
 
+#[derive(Default)]
 pub struct LinuxDiskCollector;
 
 impl LinuxDiskCollector {

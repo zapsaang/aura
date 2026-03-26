@@ -10,6 +10,7 @@ use crate::collectors::NetByteSnapshot;
 
 static NETIF_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
 
+#[derive(Default)]
 pub struct LinuxNetworkCollector;
 
 impl LinuxNetworkCollector {

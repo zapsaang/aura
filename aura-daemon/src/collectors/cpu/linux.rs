@@ -10,6 +10,7 @@ use crate::collectors::CpuTickSnapshot;
 
 static CORE_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
 
+#[derive(Default)]
 pub struct LinuxCpuCollector;
 
 impl LinuxCpuCollector {
