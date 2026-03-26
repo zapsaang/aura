@@ -20,9 +20,9 @@ impl FixedString16 {
 
     pub fn from_bytes(b: &[u8]) -> Self {
         let mut s = Self::new();
-        let len = b.len().min(16);
+        let end = find_utf8_truncation_point(b, 16);
         let mut i = 0;
-        while i < len {
+        while i < end {
             s.bytes[i] = b[i];
             i += 1;
         }
@@ -31,8 +31,48 @@ impl FixedString16 {
 
     pub fn as_str(&self) -> &str {
         let len = self.bytes.iter().position(|&b| b == 0).unwrap_or(16);
-        unsafe { std::str::from_utf8_unchecked(&self.bytes[..len]) }
+        let slice = &self.bytes[..len];
+        match std::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(e) => unsafe { std::str::from_utf8_unchecked(&slice[..e.valid_up_to()]) },
+        }
     }
+}
+
+fn find_utf8_truncation_point(b: &[u8], max_len: usize) -> usize {
+    let len = b.len().min(max_len);
+    if len == 0 {
+        return 0;
+    }
+
+    let mut i = 0;
+    while i < len {
+        let byte = b[i];
+
+        if byte & 0x80 == 0 {
+            i += 1;
+            continue;
+        }
+
+        let cont_needed = if (byte & 0xE0) == 0xC0 {
+            1
+        } else if (byte & 0xF0) == 0xE0 {
+            2
+        } else if (byte & 0xF8) == 0xF0 {
+            3
+        } else {
+            i += 1;
+            continue;
+        };
+
+        if i + cont_needed < len {
+            i += cont_needed + 1;
+        } else {
+            return i;
+        }
+    }
+
+    len
 }
 
 impl Default for FixedString16 {
