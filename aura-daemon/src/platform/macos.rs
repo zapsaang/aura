@@ -1,16 +1,38 @@
+use std::sync::OnceLock;
+
 use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStats};
 
 #[cfg(target_os = "macos")]
 use aura_common::{CpuCoreStat, FixedString16, ProcessStat, MAX_CORES, MAX_TOP_N};
 
 #[cfg(target_os = "macos")]
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-};
+use std::{collections::HashMap, sync::Mutex};
 
-use super::PlatformStatsProvider;
+#[cfg(target_os = "macos")]
+use crate::collectors::heap::{zero_process, HeapEntry, MinHeap5};
+
+pub trait PlatformStatsProvider: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn cpu_stats(&self) -> AuraResult<CpuGlobalStat>;
+    fn memory_stats(&self) -> AuraResult<MemoryStats>;
+    fn process_stats(&self) -> AuraResult<ProcessStats>;
+}
+
+static PROVIDER: OnceLock<Box<dyn PlatformStatsProvider>> = OnceLock::new();
+
+pub fn init() -> AuraResult<&'static dyn PlatformStatsProvider> {
+    if PROVIDER.get().is_none() {
+        let provider: Box<dyn PlatformStatsProvider> = Box::new(MacosPlatform::new()?);
+        let _ = PROVIDER.set(provider);
+    }
+    provider()
+}
+
+pub fn provider() -> AuraResult<&'static dyn PlatformStatsProvider> {
+    PROVIDER.get().map(|p| p.as_ref()).ok_or_else(|| {
+        AuraError::PlatformNotSupported("platform provider not initialized".to_string())
+    })
+}
 
 #[cfg(target_os = "macos")]
 type MachPort = libc::c_uint;
@@ -79,141 +101,6 @@ unsafe extern "C" {
     ) -> libc::c_int;
     fn mach_absolute_time() -> u64;
     fn mach_timebase_info(info: *mut libc::mach_timebase_info_data_t) -> KernReturn;
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy)]
-struct HeapEntry {
-    key: u64,
-    stat: ProcessStat,
-}
-
-#[cfg(target_os = "macos")]
-impl HeapEntry {
-    fn new(key: u64, stat: ProcessStat) -> Self {
-        Self { key, stat }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl PartialEq for HeapEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Eq for HeapEntry {}
-
-#[cfg(target_os = "macos")]
-impl PartialOrd for HeapEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Ord for HeapEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.key.cmp(&other.key)
-    }
-}
-
-#[cfg(target_os = "macos")]
-struct MinHeap5 {
-    heap: [Option<HeapEntry>; MAX_TOP_N],
-    count: usize,
-}
-
-#[cfg(target_os = "macos")]
-impl MinHeap5 {
-    fn new() -> Self {
-        Self {
-            heap: [None, None, None, None, None],
-            count: 0,
-        }
-    }
-
-    fn push(&mut self, val: HeapEntry) {
-        if self.count < MAX_TOP_N {
-            self.heap[self.count] = Some(val);
-            self.bubble_up(self.count);
-            self.count += 1;
-            return;
-        }
-
-        if let Some(root) = self.heap[0] {
-            if val > root {
-                self.heap[0] = Some(val);
-                self.bubble_down(0);
-            }
-        }
-    }
-
-    fn bubble_up(&mut self, mut i: usize) {
-        while i > 0 {
-            let p = (i - 1) / 2;
-            if self.heap[i] < self.heap[p] {
-                self.heap.swap(i, p);
-                i = p;
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn bubble_down(&mut self, mut i: usize) {
-        loop {
-            let l = i * 2 + 1;
-            let r = i * 2 + 2;
-            let mut s = i;
-
-            if l < self.count && self.heap[l] < self.heap[s] {
-                s = l;
-            }
-            if r < self.count && self.heap[r] < self.heap[s] {
-                s = r;
-            }
-            if s == i {
-                break;
-            }
-            self.heap.swap(i, s);
-            i = s;
-        }
-    }
-
-    fn as_desc_array(&self) -> [ProcessStat; MAX_TOP_N] {
-        let mut tmp = self.heap;
-        let mut n = self.count;
-        let mut out = [zero_process(); MAX_TOP_N];
-        let mut idx = 0usize;
-
-        while n > 0 && idx < MAX_TOP_N {
-            let max_i = max_entry_index(&tmp, n);
-            if let Some(v) = tmp[max_i] {
-                out[idx] = v.stat;
-                idx += 1;
-            }
-            tmp[max_i] = tmp[n - 1];
-            tmp[n - 1] = None;
-            n -= 1;
-        }
-
-        out
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn max_entry_index(arr: &[Option<HeapEntry>; MAX_TOP_N], n: usize) -> usize {
-    let mut max_i = 0usize;
-    let mut i = 1usize;
-    while i < n {
-        if arr[i] > arr[max_i] {
-            max_i = i;
-        }
-        i += 1;
-    }
-    max_i
 }
 
 #[cfg(target_os = "macos")]
@@ -745,22 +632,9 @@ const fn zero_core() -> CpuCoreStat {
     }
 }
 
-#[cfg(target_os = "macos")]
-const fn zero_process() -> ProcessStat {
-    ProcessStat {
-        pid: 0,
-        cpu_usage: 0.0,
-        memory_bytes: 0,
-        comm: aura_common::FixedString16 { bytes: [0; 16] },
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::MacosPlatform;
-
-    #[cfg(target_os = "macos")]
-    use crate::platform::PlatformStatsProvider;
+    use super::{MacosPlatform, PlatformStatsProvider};
 
     #[test]
     #[cfg(not(target_os = "macos"))]

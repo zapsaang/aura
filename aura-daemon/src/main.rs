@@ -6,7 +6,7 @@ use env_logger::Builder;
 use log::{error, info, LevelFilter};
 
 use aura_common::{AuraResult, DEFAULT_HEARTBEAT_MS, SHM_PATH};
-use aura_daemon::{collectors, heartbeat, platform, state};
+use aura_daemon::{collectors, heartbeat, state};
 
 #[derive(Parser, Debug)]
 #[command(author, version = env!("GIT_VERSION"), about = "AURA daemon telemetry producer")]
@@ -28,9 +28,6 @@ fn run(args: Args) -> AuraResult<()> {
     info!("AURA daemon starting");
     info!("shared memory path: {}", args.shm_path);
     info!("heartbeat: {}ms", args.heartbeat_ms);
-
-    let provider = platform::init()?;
-    info!("platform provider: {}", provider.name());
 
     let shm = state::ShmHandle::new(Path::new(&args.shm_path))?;
     let mut collector_state = collectors::CollectorState::new();

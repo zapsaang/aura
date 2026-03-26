@@ -33,7 +33,7 @@ pub fn run(
         }
 
         #[cfg(target_os = "linux")]
-        crate::platform::linux::send_watchdog_heartbeat();
+        send_watchdog_heartbeat();
 
         let elapsed = cycle_start.elapsed();
         if elapsed < heartbeat {
@@ -46,4 +46,9 @@ pub fn run(
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn send_watchdog_heartbeat() {
+    let _ = std::fs::write("/proc/sys/kernel/watchdog", "1");
 }
