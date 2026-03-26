@@ -72,6 +72,7 @@ pub struct CollectorState {
     pub prev_timestamp_ns: u64,
     pub prev_proc_total_ticks: u64,
     pub prev_proc_ticks: HashMap<u32, u64>,
+    pub proc_fd_cache: process::ProcFdCache,
     pub proc_buffer: [u8; PROC_BUFFER_SIZE],
     pub aux_buffer: [u8; PROC_BUFFER_SIZE],
 }
@@ -87,6 +88,7 @@ impl CollectorState {
             prev_timestamp_ns: 0,
             prev_proc_total_ticks: 0,
             prev_proc_ticks: HashMap::with_capacity(1024),
+            proc_fd_cache: process::ProcFdCache::new(),
             proc_buffer: [0; PROC_BUFFER_SIZE],
             aux_buffer: [0; PROC_BUFFER_SIZE],
         }
@@ -139,6 +141,8 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
             &mut state.prev_proc_ticks,
             &mut state.prev_proc_total_ticks,
             state.telemetry.cpu.total_ticks,
+            state.telemetry.cpu.core_count,
+            &mut state.proc_fd_cache,
         )?;
 
         memory::collect(

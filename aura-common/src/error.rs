@@ -25,6 +25,9 @@ pub enum AuraError {
 
     #[error("Platform not supported: {0}")]
     PlatformNotSupported(String),
+
+    #[error("Security validation failed: {0}")]
+    Security(String),
 }
 
 pub type AuraResult<T> = Result<T, AuraError>;

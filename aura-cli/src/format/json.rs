@@ -314,7 +314,7 @@ fn meta_to_json(telemetry: &TelemetryArchive) -> MetaStatsJson {
 fn gpu_to_json(telemetry: &TelemetryArchive) -> GpuStatsJson {
     let gpu = &telemetry.gpu;
     GpuStatsJson {
-        nvml_available: gpu.nvml_available,
+        nvml_available: gpu.nvml_available != 0,
         gpus: (0..gpu.gpu_count as usize)
             .map(|idx| {
                 let item = &gpu.gpus[idx];
@@ -325,7 +325,7 @@ fn gpu_to_json(telemetry: &TelemetryArchive) -> GpuStatsJson {
                     utilization_percent: item.utilization_percent,
                     power_watts: item.power_watts,
                     temperature_celsius: item.temperature_celsius,
-                    available: item.available,
+                    available: item.available != 0,
                 }
             })
             .collect(),

@@ -1,5 +1,5 @@
 use std::hint::spin_loop;
-use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicUsize, Ordering};
 
 use rkyv::{
     ser::{serializers::BufferSerializer, Serializer},
@@ -38,14 +38,14 @@ where
 
         let v1 = v;
 
-        compiler_fence(Ordering::SeqCst);
+        fence(Ordering::Acquire);
 
         let archived = unsafe { &*data_ptr };
         let result = archived
             .deserialize(&mut rkyv::Infallible)
             .map_err(|_| AuraError::SeqLockInvalid)?;
 
-        compiler_fence(Ordering::SeqCst);
+        fence(Ordering::Acquire);
         let v2 = version_ptr.load(Ordering::SeqCst);
 
         if v1 == v2 {
@@ -73,7 +73,7 @@ where
 {
     version_ptr.fetch_add(1, Ordering::SeqCst);
 
-    compiler_fence(Ordering::SeqCst);
+    fence(Ordering::Release);
 
     let result = (|| {
         let buf_len = std::mem::size_of::<T::Archived>();
@@ -92,7 +92,7 @@ where
         Ok(())
     })();
 
-    compiler_fence(Ordering::SeqCst);
+    fence(Ordering::Release);
 
     version_ptr.fetch_add(1, Ordering::SeqCst);
 

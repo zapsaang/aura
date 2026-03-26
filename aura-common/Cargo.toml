@@ -10,6 +10,7 @@ crossbeam-epoch = { workspace = true }
 thiserror = { workspace = true }
 crc32fast = { workspace = true }
 libc = "0.2"
+bytemuck = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 rand = "0.8"

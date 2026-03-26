@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
-use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStats};
+use aura_common::{
+    system_page_size, AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStats,
+};
 
 #[cfg(target_os = "macos")]
 use aura_common::{CpuCoreStat, FixedString16, ProcessStat, MAX_CORES, MAX_TOP_N};
@@ -404,7 +406,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 )));
             }
 
-            let page_size = 4096u64;
+            let page_size = system_page_size() as u64;
             let free =
                 (stats_buf.get(0).copied().unwrap_or_default() as u64).saturating_mul(page_size);
             let active =

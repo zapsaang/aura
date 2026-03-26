@@ -1,8 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{read_dir, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 
-use aura_common::{AuraError, AuraResult, FixedString16, ProcessStat, ProcessStats};
+use aura_common::{
+    system_page_size, AuraError, AuraResult, FixedString16, ProcessStat, ProcessStats,
+};
 
 use super::heap::{HeapEntry, MinHeap5};
 use super::parsing::{parse_u64, split_whitespace, trim_ascii};
@@ -44,17 +47,58 @@ fn parse_proc_stat(buf: &[u8]) -> AuraResult<(u32, FixedString16, u64, u64, u64,
         comm,
         utime,
         stime,
-        rss_pages.saturating_mul(4096),
+        rss_pages.saturating_mul(system_page_size() as u64),
         state,
     ))
 }
 
+pub struct ProcFdCache {
+    cache: HashMap<u32, File>,
+    proc_root: PathBuf,
+}
+
+impl ProcFdCache {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+            proc_root: PathBuf::from("/proc"),
+        }
+    }
+
+    fn get_or_open(&mut self, pid: u32) -> Option<&mut File> {
+        if self.cache.contains_key(&pid) {
+            return self.cache.get_mut(&pid);
+        }
+
+        let stat_path = self.proc_root.join(pid.to_string()).join("stat");
+        match File::open(stat_path) {
+            Ok(file) => {
+                self.cache.insert(pid, file);
+                self.cache.get_mut(&pid)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn prune(&mut self, active_pids: &HashSet<u32>) {
+        self.cache.retain(|pid, _| active_pids.contains(pid));
+    }
+}
+
+impl Default for ProcFdCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn collect_top_n(
-    buf: &mut [u8; 4096],
+    buf: &mut [u8; aura_common::PROC_BUFFER_SIZE],
     out: &mut ProcessStats,
     prev_proc_ticks: &mut HashMap<u32, u64>,
     prev_total_ticks: &mut u64,
     current_total_ticks: u64,
+    core_count: u8,
+    proc_cache: &mut ProcFdCache,
 ) -> AuraResult<()> {
     let mut total = 0u32;
     let mut running = 0u32;
@@ -64,8 +108,10 @@ pub fn collect_top_n(
     let mut mem_heap = MinHeap5::new();
 
     let mut current_proc_ticks = HashMap::with_capacity(prev_proc_ticks.len());
+    let mut active_pids = HashSet::with_capacity(prev_proc_ticks.len());
 
     let global_delta = current_total_ticks.saturating_sub(*prev_total_ticks);
+    let ncores = core_count.max(1) as f32;
 
     for entry in read_dir("/proc")? {
         let entry = match entry {
@@ -82,11 +128,16 @@ pub fn collect_top_n(
             _ => continue,
         };
 
-        let stat_path = entry.path().join("stat");
-        let mut file = match File::open(stat_path) {
-            Ok(f) => f,
-            Err(_) => continue,
+        active_pids.insert(pid);
+
+        let file = match proc_cache.get_or_open(pid) {
+            Some(f) => f,
+            None => continue,
         };
+
+        if file.seek(SeekFrom::Start(0)).is_err() {
+            continue;
+        }
 
         let n = match file.read(buf) {
             Ok(n) => n,
@@ -112,7 +163,7 @@ pub fn collect_top_n(
         current_proc_ticks.insert(pid, curr_ticks);
 
         let cpu_percent = if global_delta > 0 {
-            (delta_proc as f32 / global_delta as f32) * 100.0
+            (delta_proc as f32 * ncores / global_delta as f32) * 100.0
         } else {
             0.0
         };
@@ -134,6 +185,8 @@ pub fn collect_top_n(
         };
         mem_heap.push(HeapEntry::new(rss, mem_stat));
     }
+
+    proc_cache.prune(&active_pids);
 
     *prev_total_ticks = current_total_ticks;
     *prev_proc_ticks = current_proc_ticks;
@@ -161,6 +214,6 @@ mod tests {
         assert_eq!(state, b'R');
         assert_eq!(utime, 100);
         assert_eq!(stime, 20);
-        assert_eq!(rss, 4096 * 200);
+        assert_eq!(rss, aura_common::system_page_size() as u64 * 200);
     }
 }

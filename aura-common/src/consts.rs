@@ -31,5 +31,19 @@ pub const MAX_PID: u32 = 65535;
 /// Page size for /proc parsing buffer
 pub const PROC_BUFFER_SIZE: usize = 4096;
 
+pub fn system_page_size() -> usize {
+    static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PAGE_SIZE.get_or_init(|| {
+        #[cfg(unix)]
+        {
+            unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+        }
+        #[cfg(windows)]
+        {
+            4096
+        }
+    })
+}
+
 /// NVML library name
 pub const NVML_LIBRARY: &str = "libnvidia-ml.so.1";

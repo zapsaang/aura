@@ -16,7 +16,7 @@ mod imp {
 
     pub fn init_nvml(gpu: &mut GpuStats) -> AuraResult<()> {
         gpu.gpu_count = 0;
-        gpu.nvml_available = false;
+        gpu.nvml_available = 0;
 
         let nvml = match NVML::init() {
             Ok(n) => n,
@@ -25,7 +25,7 @@ mod imp {
 
         let count = nvml.device_count().unwrap_or(0).min(8);
         gpu.gpu_count = count as u8;
-        gpu.nvml_available = true;
+        gpu.nvml_available = 1;
 
         if let Ok(mut guard) = nvml_store().lock() {
             *guard = Some(nvml);
@@ -35,7 +35,7 @@ mod imp {
     }
 
     pub fn collect_nvml(gpu: &mut GpuStats) -> AuraResult<()> {
-        if !gpu.nvml_available {
+        if gpu.nvml_available == 0 {
             return Ok(());
         }
 
@@ -56,7 +56,7 @@ mod imp {
                 utilization_percent: 0.0,
                 power_watts: 0.0,
                 temperature_celsius: 0,
-                available: true,
+                available: 1,
             };
 
             if let Ok(device) = nvml.device_by_index(i as u32) {
@@ -77,7 +77,7 @@ mod imp {
                     stat.temperature_celsius = temp as i16;
                 }
             } else {
-                stat.available = false;
+                stat.available = 0;
             }
 
             gpu.gpus[i] = stat;
@@ -94,7 +94,7 @@ mod imp {
 
     pub fn init_nvml(gpu: &mut GpuStats) -> AuraResult<()> {
         gpu.gpu_count = 0;
-        gpu.nvml_available = false;
+        gpu.nvml_available = 0;
         Ok(())
     }
 

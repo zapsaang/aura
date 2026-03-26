@@ -1,7 +1,8 @@
 use std::fs::OpenOptions;
 use std::hint::spin_loop;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use aura_common::{
@@ -56,12 +57,20 @@ impl TelemetryReader {
                 continue;
             }
 
-            compiler_fence(Ordering::SeqCst);
-            let snapshot = unsafe { std::ptr::read_unaligned(data_ptr) };
-            compiler_fence(Ordering::SeqCst);
+            let mut buf: MaybeUninit<TelemetryArchive> = MaybeUninit::uninit();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    data_ptr as *const u8,
+                    buf.as_mut_ptr() as *mut u8,
+                    std::mem::size_of::<TelemetryArchive>(),
+                );
+            }
+
+            fence(Ordering::Acquire);
 
             let v2 = unsafe { (*version_ptr).load(Ordering::SeqCst) };
             if v1 == v2 && v2 & 1 == 0 {
+                let snapshot = unsafe { buf.assume_init() };
                 return Ok(snapshot);
             }
 
@@ -314,10 +323,10 @@ mod tests {
                 utilization_percent: 0.0,
                 power_watts: 0.0,
                 temperature_celsius: 0,
-                available: false,
+                available: 0,
             }; 8],
             gpu_count: 0,
-            nvml_available: false,
+            nvml_available: 0,
         };
         t
     }

@@ -7,7 +7,10 @@ pub const MAX_NETIFS: usize = 16;
 pub const MAX_MOUNTS: usize = 32;
 pub const MAX_DISKS: usize = 16;
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[derive(
+    Archive, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable,
+)]
 #[archive_attr(derive(Copy, Clone, PartialEq, Eq))]
 pub struct FixedString16 {
     pub bytes: [u8; 16],
@@ -81,6 +84,7 @@ impl Default for FixedString16 {
     }
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct CpuCoreStat {
@@ -92,6 +96,7 @@ pub struct CpuCoreStat {
     pub usage_percent: f32,
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct CpuGlobalStat {
@@ -106,7 +111,8 @@ pub struct CpuGlobalStat {
     pub core_count: u8,
 }
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
+#[repr(C)]
+#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct ProcessStat {
     pub pid: u32,
@@ -115,7 +121,8 @@ pub struct ProcessStat {
     pub comm: FixedString16,
 }
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
+#[repr(C)]
+#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct ProcessStats {
     pub total: u32,
@@ -126,6 +133,7 @@ pub struct ProcessStats {
     pub top_mem: [ProcessStat; MAX_TOP_N],
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct MemoryStats {
@@ -141,7 +149,8 @@ pub struct MemoryStats {
     pub page_faults_per_sec: f32,
 }
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
+#[repr(C)]
+#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct DiskStat {
     pub name: FixedString16,
@@ -151,6 +160,7 @@ pub struct DiskStat {
     pub wx_per_sec: f32,
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct MountStat {
@@ -162,6 +172,7 @@ pub struct MountStat {
     pub percent: f32,
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct StorageStats {
@@ -171,7 +182,8 @@ pub struct StorageStats {
     pub mount_count: u16,
 }
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
+#[repr(C)]
+#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct NetIfStat {
     pub name: FixedString16,
@@ -181,6 +193,7 @@ pub struct NetIfStat {
     pub tx_bytes_per_sec: f32,
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct NetworkStats {
@@ -188,7 +201,8 @@ pub struct NetworkStats {
     pub if_count: u8,
 }
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
+#[repr(C)]
+#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct OsFingerprint {
     pub os_type: FixedString16,
@@ -197,7 +211,8 @@ pub struct OsFingerprint {
     pub os_pretty_name: [u8; 128],
 }
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
+#[repr(C)]
+#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct MetaStats {
     pub timestamp_ns: u64,
@@ -210,6 +225,7 @@ pub struct MetaStats {
     pub os: OsFingerprint,
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct GpuStat {
@@ -219,17 +235,19 @@ pub struct GpuStat {
     pub utilization_percent: f32,
     pub power_watts: f32,
     pub temperature_celsius: i16,
-    pub available: bool,
+    pub available: u8,
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct GpuStats {
     pub gpus: [GpuStat; 8],
     pub gpu_count: u8,
-    pub nvml_available: bool,
+    pub nvml_available: u8,
 }
 
+#[repr(C)]
 #[derive(Archive, Serialize, Deserialize, Clone, Copy)]
 #[archive_attr(derive(Copy, Clone))]
 pub struct TelemetryArchive {
