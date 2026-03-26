@@ -1,12 +1,39 @@
 use std::hint::spin_loop;
 use std::sync::atomic::{fence, AtomicUsize, Ordering};
 
-use rkyv::{
-    ser::{serializers::BufferSerializer, Serializer},
-    Archive, Deserialize,
-};
+use bytemuck::Pod;
 
 use crate::{AuraError, AuraResult};
+
+pub struct SeqLockWriterGuard<'a> {
+    version: &'a AtomicUsize,
+    owned: bool,
+}
+
+impl<'a> SeqLockWriterGuard<'a> {
+    #[inline]
+    pub fn begin(version: &'a AtomicUsize) -> Self {
+        version.fetch_add(1, Ordering::SeqCst);
+        Self {
+            version,
+            owned: true,
+        }
+    }
+
+    #[inline]
+    pub fn complete(mut self) {
+        self.version.fetch_add(1, Ordering::Release);
+        self.owned = false;
+    }
+}
+
+impl<'a> Drop for SeqLockWriterGuard<'a> {
+    fn drop(&mut self) {
+        if self.owned {
+            self.version.fetch_add(1, Ordering::Release);
+        }
+    }
+}
 
 /// Reads a seqlock-protected value with spin-wait retry logic.
 ///
@@ -14,13 +41,7 @@ use crate::{AuraError, AuraResult};
 /// The `data_ptr` must be non-null, properly aligned, and point to valid initialized memory
 /// for the lifetime of the operation. The `version_ptr` must be synchronized with `data_ptr`.
 #[inline]
-pub unsafe fn read_seqlock<T: Archive>(
-    version_ptr: &AtomicUsize,
-    data_ptr: *const T::Archived,
-) -> AuraResult<T>
-where
-    T::Archived: Deserialize<T, rkyv::Infallible>,
-{
+pub unsafe fn read_seqlock<T: Pod>(version_ptr: &AtomicUsize, data_ptr: *const T) -> AuraResult<T> {
     let mut spin_count = 0;
     const MAX_SPINS: usize = 10_000;
 
@@ -40,10 +61,7 @@ where
 
         fence(Ordering::Acquire);
 
-        let archived = unsafe { &*data_ptr };
-        let result = archived
-            .deserialize(&mut rkyv::Infallible)
-            .map_err(|_| AuraError::SeqLockInvalid)?;
+        let result = unsafe { std::ptr::read_volatile(data_ptr) };
 
         fence(Ordering::Acquire);
         let v2 = version_ptr.load(Ordering::SeqCst);
@@ -64,39 +82,23 @@ where
 #[inline]
 pub unsafe fn write_seqlock<T>(
     version_ptr: &mut AtomicUsize,
-    data_ptr: *mut T::Archived,
+    data_ptr: *mut T,
     value: &T,
 ) -> AuraResult<()>
 where
-    T: Archive,
-    for<'a> T: rkyv::Serialize<BufferSerializer<&'a mut [u8]>>,
+    T: Pod,
 {
     version_ptr.fetch_add(1, Ordering::SeqCst);
 
     fence(Ordering::Release);
 
-    let result = (|| {
-        let buf_len = std::mem::size_of::<T::Archived>();
-        let buffer = unsafe { std::slice::from_raw_parts_mut(data_ptr.cast::<u8>(), buf_len) };
-        let mut serializer = BufferSerializer::new(buffer);
-
-        let root_pos = serializer
-            .serialize_value(value)
-            .map_err(|e| AuraError::MmapFailed(format!("Serialization failed: {e}")))?;
-
-        if root_pos != 0 {
-            return Err(AuraError::MmapFailed(format!(
-                "Serialization root offset {root_pos} is unsupported for seqlock writes"
-            )));
-        }
-        Ok(())
-    })();
+    unsafe { std::ptr::write_volatile(data_ptr, *value) };
 
     fence(Ordering::Release);
 
     version_ptr.fetch_add(1, Ordering::SeqCst);
 
-    result
+    Ok(())
 }
 
 #[inline]

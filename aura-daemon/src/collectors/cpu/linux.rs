@@ -5,10 +5,30 @@ use std::sync::OnceLock;
 use aura_common::{AuraResult, CpuCoreStat, CpuGlobalStat, MAX_CORES};
 use log::warn;
 
-use super::parsing::{parse_u64, split_whitespace};
-use super::CpuTickSnapshot;
+use crate::collectors::parsing::{parse_u64, split_whitespace};
+use crate::collectors::CpuTickSnapshot;
 
 static CORE_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
+
+pub struct LinuxCpuCollector;
+
+impl LinuxCpuCollector {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl super::CpuCollector for LinuxCpuCollector {
+    fn collect(
+        &self,
+        buf: &mut [u8; 4096],
+        out: &mut CpuGlobalStat,
+        prev: &mut CpuTickSnapshot,
+        delta_secs: f32,
+    ) -> AuraResult<()> {
+        collect(buf, out, prev, delta_secs)
+    }
+}
 
 pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
     let mut user = 0u64;
@@ -100,6 +120,7 @@ pub fn parse_core_stats(
 
         out_cores[count] = CpuCoreStat {
             core_index: count as u8,
+            _pad0: [0; 7],
             user_ticks: user,
             system_ticks: system,
             idle_ticks: idle,
@@ -109,6 +130,7 @@ pub fn parse_core_stats(
             } else {
                 0.0
             },
+            _pad1: [0; 4],
         };
         count += 1;
     }
@@ -174,7 +196,7 @@ mod tests {
 
     #[test]
     fn parse_global_cpu_and_ctxt() {
-        let fixture = include_bytes!("../../tests/fixtures/proc_stat_sample.txt");
+        let fixture = include_bytes!("../../../tests/fixtures/proc_stat_sample.txt");
         let (user, system, idle, total, ctxt) = parse_cpu_stat(fixture).expect("parse");
         assert_eq!(user, 2255);
         assert_eq!(system, 2290);
@@ -185,14 +207,16 @@ mod tests {
 
     #[test]
     fn parse_core_rows() {
-        let fixture = include_bytes!("../../tests/fixtures/proc_stat_sample.txt");
+        let fixture = include_bytes!("../../../tests/fixtures/proc_stat_sample.txt");
         let mut cores = [CpuCoreStat {
             core_index: 0,
+            _pad0: [0; 7],
             user_ticks: 0,
             system_ticks: 0,
             idle_ticks: 0,
             total_ticks: 0,
             usage_percent: 0.0,
+            _pad1: [0; 4],
         }; MAX_CORES];
         let mut count = 0u8;
         parse_core_stats(fixture, &mut cores, &mut count).expect("parse");

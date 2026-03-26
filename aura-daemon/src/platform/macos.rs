@@ -303,6 +303,7 @@ impl PlatformStatsProvider for MacosPlatform {
 
                     cores[core_idx] = CpuCoreStat {
                         core_index: core_idx as u8,
+                        _pad0: [0; 7],
                         user_ticks: c_user.saturating_add(c_nice),
                         system_ticks: c_system,
                         idle_ticks: c_idle,
@@ -312,6 +313,7 @@ impl PlatformStatsProvider for MacosPlatform {
                         } else {
                             0.0
                         },
+                        _pad1: [0; 4],
                     };
 
                     core_idx += 1;
@@ -375,6 +377,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 usage_percent,
                 cores,
                 core_count,
+                _pad0: [0; 7],
             });
         }
 
@@ -432,6 +435,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 swap_used: 0,
                 page_faults: (stats_buf.get(7).copied().unwrap_or_default() as u64),
                 page_faults_per_sec: 0.0,
+                _pad0: [0; 4],
             });
         }
 
@@ -626,11 +630,13 @@ fn mach_absolute_to_ns(ticks: u64) -> u64 {
 const fn zero_core() -> CpuCoreStat {
     CpuCoreStat {
         core_index: 0,
+        _pad0: [0; 7],
         user_ticks: 0,
         system_ticks: 0,
         idle_ticks: 0,
         total_ticks: 0,
         usage_percent: 0.0,
+        _pad1: [0; 4],
     }
 }
 

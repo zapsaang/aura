@@ -2,7 +2,6 @@ use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aura_common::{read_seqlock, write_seqlock, TelemetryArchive};
-use rkyv::Archived;
 
 #[test]
 fn seqlock_handles_large_archive() {
@@ -15,7 +14,7 @@ fn seqlock_handles_large_archive() {
     archive.memory.ram_total = 64 * 1024 * 1024;
     archive.meta.uptime_secs = 9_999;
 
-    let mut slot = MaybeUninit::<Archived<TelemetryArchive>>::zeroed();
+    let mut slot = MaybeUninit::<TelemetryArchive>::zeroed();
 
     unsafe {
         write_seqlock(&mut version, slot.as_mut_ptr(), &archive)

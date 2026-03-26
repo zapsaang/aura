@@ -3,6 +3,27 @@ use std::io::Read;
 
 use aura_common::{AuraResult, MemoryStats};
 
+pub struct LinuxMemoryCollector;
+
+impl LinuxMemoryCollector {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl super::MemoryCollector for LinuxMemoryCollector {
+    fn collect(
+        &self,
+        meminfo_buf: &mut [u8; 4096],
+        vmstat_buf: &mut [u8; 4096],
+        out: &mut MemoryStats,
+        prev_page_faults: &mut u64,
+        delta_secs: f32,
+    ) -> AuraResult<()> {
+        collect(meminfo_buf, vmstat_buf, out, prev_page_faults, delta_secs)
+    }
+}
+
 pub fn parse_meminfo(buf: &[u8]) -> MemoryStats {
     let mut stats = MemoryStats {
         ram_total: 0,
@@ -15,6 +36,7 @@ pub fn parse_meminfo(buf: &[u8]) -> MemoryStats {
         swap_used: 0,
         page_faults: 0,
         page_faults_per_sec: 0.0,
+        _pad0: [0; 4],
     };
 
     let mut line_start = 0usize;
@@ -112,7 +134,7 @@ mod tests {
 
     #[test]
     fn parse_meminfo_sample() {
-        let fixture = include_bytes!("../../tests/fixtures/proc_meminfo_sample.txt");
+        let fixture = include_bytes!("../../../tests/fixtures/proc_meminfo_sample.txt");
         let stats = parse_meminfo(fixture);
         assert_eq!(stats.ram_total, 16384000 * 1024);
         assert_eq!(stats.swap_free, 1048576 * 1024);
@@ -121,7 +143,7 @@ mod tests {
 
     #[test]
     fn parse_vmstat_sample() {
-        let fixture = include_bytes!("../../tests/fixtures/proc_vmstat_sample.txt");
+        let fixture = include_bytes!("../../../tests/fixtures/proc_vmstat_sample.txt");
         let faults = parse_vmstat_page_faults(fixture);
         assert_eq!(faults, 67890);
     }

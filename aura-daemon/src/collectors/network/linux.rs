@@ -5,10 +5,30 @@ use std::sync::OnceLock;
 use aura_common::{AuraResult, FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
 use log::warn;
 
-use super::parsing::{parse_u64, split_whitespace, trim_ascii};
-use super::NetByteSnapshot;
+use crate::collectors::parsing::{parse_u64, split_whitespace, trim_ascii};
+use crate::collectors::NetByteSnapshot;
 
 static NETIF_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
+
+pub struct LinuxNetworkCollector;
+
+impl LinuxNetworkCollector {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl super::NetworkCollector for LinuxNetworkCollector {
+    fn collect(
+        &self,
+        buf: &mut [u8; 4096],
+        out: &mut NetworkStats,
+        prev: &mut NetByteSnapshot,
+        delta_secs: f32,
+    ) -> AuraResult<()> {
+        collect(buf, out, prev, delta_secs)
+    }
+}
 
 pub fn parse_net_dev(
     buf: &[u8],
@@ -118,7 +138,7 @@ mod tests {
 
     #[test]
     fn parse_net_dev_sample() {
-        let fixture = include_bytes!("../../tests/fixtures/proc_net_dev_sample.txt");
+        let fixture = include_bytes!("../../../tests/fixtures/proc_net_dev_sample.txt");
         let mut interfaces = [NetIfStat {
             name: aura_common::FixedString16::new(),
             rx_bytes: 0,

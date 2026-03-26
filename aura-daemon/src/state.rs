@@ -3,11 +3,14 @@ use std::io::ErrorKind;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
-use std::sync::atomic::{fence, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 
 use memmap2::{MmapMut, MmapOptions};
 
-use aura_common::{AuraError, AuraResult, TelemetryArchive, DATA_OFFSET, SHM_FILE_MODE, SHM_SIZE};
+use aura_common::{
+    AuraError, AuraResult, SeqLockWriterGuard, TelemetryArchive, DATA_OFFSET, SHM_FILE_MODE,
+    SHM_SIZE,
+};
 
 pub struct ShmHandle {
     mmap: MmapMut,
@@ -74,9 +77,8 @@ impl ShmHandle {
 
     pub fn write(&mut self, telemetry: &TelemetryArchive) -> AuraResult<()> {
         let base = self.mmap.as_mut_ptr();
-        let version_ptr = base as *mut AtomicUsize;
-        unsafe { (*version_ptr).fetch_add(1, Ordering::SeqCst) };
-        fence(Ordering::Release);
+        let version_ptr = unsafe { &*(base as *const AtomicUsize) };
+        let guard = SeqLockWriterGuard::begin(version_ptr);
 
         let dst = unsafe { base.add(DATA_OFFSET) };
         let src = telemetry as *const TelemetryArchive as *const u8;
@@ -85,8 +87,7 @@ impl ShmHandle {
             std::ptr::copy_nonoverlapping(src, dst, len);
         }
 
-        fence(Ordering::Release);
-        unsafe { (*version_ptr).fetch_add(1, Ordering::SeqCst) };
+        guard.complete();
         Ok(())
     }
 }

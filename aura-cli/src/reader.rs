@@ -246,13 +246,16 @@ mod tests {
             usage_percent: cpu_usage,
             cores: [CpuCoreStat {
                 core_index: 0,
+                _pad0: [0; 7],
                 user_ticks: 0,
                 system_ticks: 0,
                 idle_ticks: 0,
                 total_ticks: 0,
                 usage_percent: cpu_usage,
+                _pad1: [0; 4],
             }; MAX_CORES],
             core_count: 1,
+            _pad0: [0; 7],
         };
         t.process = ProcessStats {
             total: 0,
@@ -283,12 +286,15 @@ mod tests {
             swap_used: 0,
             page_faults: 0,
             page_faults_per_sec: 0.0,
+            _pad0: [0; 4],
         };
         t.storage = StorageStats {
             disks: [unsafe { std::mem::zeroed() }; MAX_DISKS],
             disk_count: 0,
+            _pad0: [0; 7],
             mounts: [unsafe { std::mem::zeroed() }; MAX_MOUNTS],
             mount_count: 0,
+            _pad1: [0; 6],
         };
         t.network = NetworkStats {
             interfaces: [NetIfStat {
@@ -299,6 +305,7 @@ mod tests {
                 tx_bytes_per_sec: 0.0,
             }; MAX_NETIFS],
             if_count: 0,
+            _pad0: [0; 7],
         };
         t.meta = MetaStats {
             timestamp_ns: 0,
@@ -324,9 +331,11 @@ mod tests {
                 power_watts: 0.0,
                 temperature_celsius: 0,
                 available: 0,
+                _pad0: [0; 5],
             }; 8],
             gpu_count: 0,
             nvml_available: 0,
+            _pad0: [0; 6],
         };
         t
     }

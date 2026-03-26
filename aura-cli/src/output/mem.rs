@@ -77,6 +77,7 @@ mod tests {
             swap_used: 20,
             page_faults: 0,
             page_faults_per_sec: 7.0,
+            _pad0: [0; 4],
         };
 
         let out = render(ColorMode::None, &telemetry);
@@ -99,6 +100,7 @@ mod tests {
             swap_used: 150,
             page_faults: 0,
             page_faults_per_sec: 0.0,
+            _pad0: [0; 4],
         };
 
         let out = render_swap(ColorMode::None, &telemetry);

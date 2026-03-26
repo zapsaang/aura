@@ -14,8 +14,6 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/zapsaang/aura"
 
 [workspace.dependencies]
-# Zero-copy serialization
-rkyv = { version = "0.7", features = ["archive_le", "strict"] }
 
 # Memory mapping
 memmap2 = "0.9"

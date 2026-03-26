@@ -4,8 +4,7 @@ pub const SHM_PATH: &str = "/dev/shm/aura_state.dat";
 #[cfg(target_os = "macos")]
 pub const SHM_PATH: &str = "/tmp/aura_state.dat";
 
-/// Shared memory file size (64KB - must be page-aligned)
-pub const SHM_SIZE: usize = 65536;
+pub const SHM_SIZE: usize = 65544;
 
 /// SHM file permissions: world-readable/writable for cross-user IPC
 pub const SHM_FILE_MODE: u32 = 0o666;
@@ -30,6 +29,8 @@ pub const MAX_PID: u32 = 65535;
 
 /// Page size for /proc parsing buffer
 pub const PROC_BUFFER_SIZE: usize = 4096;
+
+pub const MIN_DELTA_NS: u64 = 1_000_000;
 
 pub fn system_page_size() -> usize {
     static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();

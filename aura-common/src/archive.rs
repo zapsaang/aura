@@ -1,5 +1,3 @@
-use rkyv::{Archive, Deserialize, Serialize};
-
 pub const MAX_PROC_NAME_LEN: usize = 16;
 pub const MAX_TOP_N: usize = 5;
 pub const MAX_CORES: usize = 128;
@@ -8,10 +6,7 @@ pub const MAX_MOUNTS: usize = 32;
 pub const MAX_DISKS: usize = 16;
 
 #[repr(C)]
-#[derive(
-    Archive, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable,
-)]
-#[archive_attr(derive(Copy, Clone, PartialEq, Eq))]
+#[derive(Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FixedString16 {
     pub bytes: [u8; 16],
 }
@@ -85,20 +80,20 @@ impl Default for FixedString16 {
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CpuCoreStat {
     pub core_index: u8,
+    pub _pad0: [u8; 7],
     pub user_ticks: u64,
     pub system_ticks: u64,
     pub idle_ticks: u64,
     pub total_ticks: u64,
     pub usage_percent: f32,
+    pub _pad1: [u8; 4],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CpuGlobalStat {
     pub user_ticks: u64,
     pub system_ticks: u64,
@@ -109,11 +104,11 @@ pub struct CpuGlobalStat {
     pub usage_percent: f32,
     pub cores: [CpuCoreStat; MAX_CORES],
     pub core_count: u8,
+    pub _pad0: [u8; 7],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessStat {
     pub pid: u32,
     pub cpu_usage: f32,
@@ -122,8 +117,7 @@ pub struct ProcessStat {
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessStats {
     pub total: u32,
     pub running: u32,
@@ -134,8 +128,7 @@ pub struct ProcessStats {
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MemoryStats {
     pub ram_total: u64,
     pub ram_free: u64,
@@ -147,11 +140,11 @@ pub struct MemoryStats {
     pub swap_used: u64,
     pub page_faults: u64,
     pub page_faults_per_sec: f32,
+    pub _pad0: [u8; 4],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DiskStat {
     pub name: FixedString16,
     pub rx_bytes: u64,
@@ -161,8 +154,7 @@ pub struct DiskStat {
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MountStat {
     pub mountpoint: [u8; 256],
     pub fstype: FixedString16,
@@ -170,21 +162,22 @@ pub struct MountStat {
     pub available: u64,
     pub used: u64,
     pub percent: f32,
+    pub _pad0: [u8; 4],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct StorageStats {
     pub disks: [DiskStat; MAX_DISKS],
     pub disk_count: u8,
+    pub _pad0: [u8; 7],
     pub mounts: [MountStat; MAX_MOUNTS],
     pub mount_count: u16,
+    pub _pad1: [u8; 6],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NetIfStat {
     pub name: FixedString16,
     pub rx_bytes: u64,
@@ -194,16 +187,15 @@ pub struct NetIfStat {
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NetworkStats {
     pub interfaces: [NetIfStat; MAX_NETIFS],
     pub if_count: u8,
+    pub _pad0: [u8; 7],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct OsFingerprint {
     pub os_type: FixedString16,
     pub os_id: FixedString16,
@@ -212,8 +204,7 @@ pub struct OsFingerprint {
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MetaStats {
     pub timestamp_ns: u64,
     pub uptime_secs: u64,
@@ -226,8 +217,7 @@ pub struct MetaStats {
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuStat {
     pub name: FixedString16,
     pub memory_total: u64,
@@ -236,20 +226,20 @@ pub struct GpuStat {
     pub power_watts: f32,
     pub temperature_celsius: i16,
     pub available: u8,
+    pub _pad0: [u8; 5],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuStats {
     pub gpus: [GpuStat; 8],
     pub gpu_count: u8,
     pub nvml_available: u8,
+    pub _pad0: [u8; 6],
 }
 
 #[repr(C)]
-#[derive(Archive, Serialize, Deserialize, Clone, Copy)]
-#[archive_attr(derive(Copy, Clone))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TelemetryArchive {
     pub version: u64,
     pub cpu: CpuGlobalStat,
@@ -260,18 +250,15 @@ pub struct TelemetryArchive {
     pub meta: MetaStats,
     pub gpu: GpuStats,
     pub checksum: u32,
+    pub _reserved: [u8; 47_268],
 }
 
 impl TelemetryArchive {
     pub fn calculate_checksum(&self) -> u32 {
-        let bytes = rkyv::to_bytes::<TelemetryArchive, 65536>(self)
-            .expect("TelemetryArchive should always serialize");
-
-        let mut hash_input = Vec::with_capacity(bytes.len() + 4);
-        hash_input.extend_from_slice(&bytes);
-        hash_input.extend_from_slice(&0u32.to_le_bytes());
-
-        crc32fast::hash(&hash_input)
+        let mut h = crc32fast::Hasher::new();
+        h.update(bytemuck::bytes_of(self));
+        h.update(&0u32.to_le_bytes());
+        h.finalize()
     }
 
     pub fn zeroed() -> Self {

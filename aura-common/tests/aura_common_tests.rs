@@ -1,4 +1,3 @@
-use rkyv::{Archived, Deserialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aura_common::{
@@ -46,18 +45,20 @@ fn archive_serialization_roundtrip() {
         usage_percent: 23.08,
         cores: [CpuCoreStat {
             core_index: 0,
+            _pad0: [0; 7],
             user_ticks: 100,
             system_ticks: 50,
             idle_ticks: 500,
             total_ticks: 650,
             usage_percent: 23.08,
+            _pad1: [0; 4],
         }; MAX_CORES],
         core_count: 1,
+        _pad0: [0; 7],
     };
 
-    let bytes = rkyv::to_bytes::<CpuGlobalStat, 1024>(&cpu).unwrap();
-    let archived = unsafe { rkyv::archived_root::<CpuGlobalStat>(&bytes) };
-    let restored: CpuGlobalStat = archived.deserialize(&mut rkyv::Infallible).unwrap();
+    let bytes = bytemuck::bytes_of(&cpu);
+    let restored = *bytemuck::from_bytes::<CpuGlobalStat>(bytes);
 
     assert_eq!(restored.user_ticks, cpu.user_ticks);
     assert_eq!(restored.system_ticks, cpu.system_ticks);
@@ -91,16 +92,19 @@ fn seqlock_writer_makes_version_odd_to_even() {
         usage_percent: 23.08,
         cores: [CpuCoreStat {
             core_index: 0,
+            _pad0: [0; 7],
             user_ticks: 100,
             system_ticks: 50,
             idle_ticks: 500,
             total_ticks: 650,
             usage_percent: 23.08,
+            _pad1: [0; 4],
         }; MAX_CORES],
         core_count: 1,
+        _pad0: [0; 7],
     };
 
-    let mut slot = std::mem::MaybeUninit::<Archived<CpuGlobalStat>>::zeroed();
+    let mut slot = std::mem::MaybeUninit::<CpuGlobalStat>::zeroed();
 
     let initial = version.load(Ordering::SeqCst);
     assert_eq!(initial, 0);

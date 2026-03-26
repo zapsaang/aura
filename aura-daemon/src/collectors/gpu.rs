@@ -57,6 +57,7 @@ mod imp {
                 power_watts: 0.0,
                 temperature_celsius: 0,
                 available: 1,
+                _pad0: [0; 5],
             };
 
             if let Ok(device) = nvml.device_by_index(i as u32) {

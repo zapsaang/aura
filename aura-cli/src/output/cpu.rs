@@ -66,13 +66,16 @@ mod tests {
             usage_percent: 84.0,
             cores: [CpuCoreStat {
                 core_index: 0,
+                _pad0: [0; 7],
                 user_ticks: 11,
                 system_ticks: 22,
                 idle_ticks: 0,
                 total_ticks: 33,
                 usage_percent: 84.0,
+                _pad1: [0; 4],
             }; MAX_CORES],
             core_count: 1,
+            _pad0: [0; 7],
         };
 
         let out = render(ColorMode::None, &telemetry);
