@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 
 use aura_common::AuraResult;
 
@@ -12,10 +12,11 @@ pub fn run(
     mut shm: ShmHandle,
     mut collector_state: CollectorState,
     heartbeat: Duration,
-    _foreground: bool,
+    shutdown_flag: &AtomicBool,
 ) -> AuraResult<()> {
-    let shutdown_flag = AtomicBool::new(false);
     info!("entering heartbeat loop ({:?})", heartbeat);
+
+    let mut next_wake = Instant::now();
 
     loop {
         if shutdown_flag.load(Ordering::Relaxed) {
@@ -35,13 +36,24 @@ pub fn run(
         #[cfg(target_os = "linux")]
         send_watchdog_heartbeat();
 
-        let elapsed = cycle_start.elapsed();
-        if elapsed < heartbeat {
-            let sleep_time = heartbeat - elapsed;
-            debug!("cycle {:?}, sleeping {:?}", elapsed, sleep_time);
+        next_wake += heartbeat;
+        let now = Instant::now();
+
+        if now < next_wake {
+            let sleep_time = next_wake - now;
+            debug!(
+                "cycle {:?}, sleeping {:?}",
+                cycle_start.elapsed(),
+                sleep_time
+            );
             std::thread::sleep(sleep_time);
         } else {
-            debug!("cycle overran {:?}", elapsed - heartbeat);
+            let overrun = now - next_wake;
+            debug!("cycle overran by {:?}", overrun);
+            if overrun > heartbeat {
+                warn!("severe starvation detected, resetting heartbeat anchor");
+                next_wake = now;
+            }
         }
     }
 

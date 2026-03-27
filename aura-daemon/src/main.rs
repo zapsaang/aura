@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::Parser;
@@ -7,6 +8,20 @@ use log::{error, info, LevelFilter};
 
 use aura_common::{AuraResult, DEFAULT_HEARTBEAT_MS, SHM_PATH};
 use aura_daemon::{collectors, heartbeat, state};
+
+static SHUTDOWN_FLAG: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+unsafe fn setup_signal_handlers() {
+    extern "C" fn handler(_sig: libc::c_int) {
+        SHUTDOWN_FLAG.store(true, Ordering::Relaxed);
+    }
+    libc::signal(libc::SIGINT, handler as *const () as usize);
+    libc::signal(libc::SIGTERM, handler as *const () as usize);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn setup_signal_handlers() {}
 
 #[derive(Parser, Debug)]
 #[command(author, version = env!("GIT_VERSION"), about = "AURA daemon telemetry producer")]
@@ -37,7 +52,7 @@ fn run(args: Args) -> AuraResult<()> {
         shm,
         collector_state,
         Duration::from_millis(args.heartbeat_ms),
-        args.foreground,
+        &SHUTDOWN_FLAG,
     )
 }
 
@@ -53,6 +68,10 @@ fn main() {
         .filter_level(level)
         .format_timestamp_millis()
         .init();
+
+    unsafe {
+        setup_signal_handlers();
+    }
 
     if let Err(e) = run(args) {
         error!("daemon failed: {e}");
