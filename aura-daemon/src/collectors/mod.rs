@@ -76,6 +76,8 @@ pub struct CollectorState {
     pub prev_timestamp_ns: u64,
     pub prev_proc_total_ticks: u64,
     pub prev_proc_ticks: HashMap<u32, u64>,
+    pub current_proc_ticks: HashMap<u32, u64>,
+    pub active_pids: HashMap<u32, ()>,
     pub proc_fd_cache: process::ProcFdCache,
     pub proc_buffer: Vec<u8>,
     pub aux_buffer: Vec<u8>,
@@ -92,6 +94,8 @@ impl CollectorState {
             prev_timestamp_ns: 0,
             prev_proc_total_ticks: 0,
             prev_proc_ticks: HashMap::with_capacity(1024),
+            current_proc_ticks: HashMap::with_capacity(1024),
+            active_pids: HashMap::with_capacity(1024),
             proc_fd_cache: process::ProcFdCache::new(),
             proc_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
             aux_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
@@ -182,13 +186,9 @@ fn collect_process(state: &mut CollectorState) -> AuraResult<()> {
     #[cfg(target_os = "linux")]
     {
         process::collect_top_n(
-            &mut state.proc_buffer,
-            &mut state.telemetry.process,
-            &mut state.prev_proc_ticks,
-            &mut state.prev_proc_total_ticks,
+            state,
             state.telemetry.cpu.total_ticks,
             state.telemetry.cpu.core_count,
-            &mut state.proc_fd_cache,
         )?;
     }
 
