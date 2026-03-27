@@ -40,7 +40,10 @@ impl TelemetryReader {
     }
 
     fn read(&self) -> AuraResult<TelemetryArchive> {
-        unsafe { read_double_buffer(self.mmap.as_ptr()).map_err(|()| AuraError::SeqLockInvalid) }
+        unsafe {
+            read_double_buffer(self.mmap.as_ptr() as *mut u8)
+                .map_err(|()| AuraError::SeqLockInvalid)
+        }
     }
 }
 
@@ -75,8 +78,8 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
     let final_seq = header.write_seq.load(Ordering::Acquire);
     let active = header.active_index.load(Ordering::Acquire);
     assert_eq!(
-        final_seq, 1,
-        "expected one committed write sequence increment, got seq {final_seq}"
+        final_seq, 2,
+        "expected two committed write sequence increments (odd+even per write), got seq {final_seq}"
     );
     assert_eq!(
         active, 1,
@@ -128,7 +131,11 @@ fn double_buffer_writer_advances_header_state() {
     };
 
     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
-    assert_eq!(header.write_seq.load(Ordering::Acquire), 2);
+    assert_eq!(
+        header.write_seq.load(Ordering::Acquire),
+        4,
+        "two writes = 4 seq increments (2x odd+even)"
+    );
     assert_eq!(header.active_index.load(Ordering::Acquire), 0);
 }
 

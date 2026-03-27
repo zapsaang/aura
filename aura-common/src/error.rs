@@ -28,6 +28,9 @@ pub enum AuraError {
 
     #[error("Security validation failed: {0}")]
     Security(String),
+
+    #[error("Another aura-daemon instance is already running (SHM file locked)")]
+    AlreadyRunning,
 }
 
 pub type AuraResult<T> = Result<T, AuraError>;

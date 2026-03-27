@@ -15,6 +15,8 @@ use aura_common::{
 };
 
 const NS_PER_SEC: f64 = 1_000_000_000.0;
+const SHRINK_INTERVAL: u32 = 60;
+const SHRINK_THRESHOLD_RATIO: usize = 4;
 
 #[derive(Clone, Copy)]
 pub struct CpuTickSnapshot {
@@ -81,6 +83,7 @@ pub struct CollectorState {
     pub proc_fd_cache: process::ProcFdCache,
     pub proc_buffer: Vec<u8>,
     pub aux_buffer: Vec<u8>,
+    pub shrink_cycle: u32,
 }
 
 impl CollectorState {
@@ -99,13 +102,32 @@ impl CollectorState {
             proc_fd_cache: process::ProcFdCache::new(),
             proc_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
             aux_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
+            shrink_cycle: 0,
         }
+    }
+
+    pub fn maybe_shrink_maps(&mut self) {
+        self.shrink_cycle = self.shrink_cycle.wrapping_add(1);
+        if self.shrink_cycle % SHRINK_INTERVAL != 0 {
+            return;
+        }
+        shrink_if_oversized(&mut self.prev_proc_ticks);
+        shrink_if_oversized(&mut self.current_proc_ticks);
+        shrink_if_oversized(&mut self.active_pids);
     }
 }
 
 impl Default for CollectorState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn shrink_if_oversized<K: Eq + std::hash::Hash, V>(map: &mut HashMap<K, V>) {
+    let cap = map.capacity();
+    let len = map.len();
+    if cap > SHRINK_THRESHOLD_RATIO * len.max(1) {
+        map.shrink_to(len.saturating_mul(2).max(256));
     }
 }
 
@@ -177,7 +199,6 @@ pub fn collect_all(state: &mut CollectorState) -> AuraResult<()> {
 
     collect_meta_and_gpu(state)?;
 
-    state.telemetry.meta.timestamp_ns = now;
     state.prev_timestamp_ns = now;
     Ok(())
 }

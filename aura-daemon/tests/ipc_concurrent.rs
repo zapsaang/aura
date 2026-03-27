@@ -244,7 +244,7 @@ fn read_snapshot_once(
     let start = Instant::now();
 
     loop {
-        let mut snapshot = match unsafe { read_double_buffer(mmap.as_ptr()) } {
+        let mut snapshot = match unsafe { read_double_buffer(mmap.as_ptr() as *mut u8) } {
             Ok(snapshot) => snapshot,
             Err(()) => {
                 stats.version_mismatches = stats.version_mismatches.saturating_add(1);

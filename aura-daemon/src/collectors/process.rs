@@ -209,6 +209,7 @@ pub fn collect_top_n(
 
     std::mem::swap(&mut state.prev_proc_ticks, &mut state.current_proc_ticks);
     state.prev_proc_total_ticks = current_total_ticks;
+    state.maybe_shrink_maps();
 
     state.telemetry.process.total = total;
     state.telemetry.process.running = running;

@@ -1,4 +1,4 @@
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
@@ -14,12 +14,34 @@ use aura_common::{
 
 pub struct ShmHandle {
     mmap: MmapMut,
+    _lock_file: File,
 }
 
 impl ShmHandle {
     pub fn new(path: &Path) -> AuraResult<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
+        }
+
+        // Acquire exclusive lock on a separate lockfile to prevent two daemons racing
+        let lock_path = path.with_extension("lock");
+        let lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&lock_path)?;
+
+        #[cfg(unix)]
+        {
+            let fd = lock_file.as_raw_fd();
+            let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+            if rc != 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                    return Err(AuraError::AlreadyRunning);
+                }
+                return Err(err.into());
+            }
         }
 
         if path.is_symlink() {
@@ -87,7 +109,10 @@ impl ShmHandle {
             file.set_len(SHM_SIZE as u64)?;
 
             let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
-            return Ok(Self { mmap });
+            return Ok(Self {
+                mmap,
+                _lock_file: lock_file,
+            });
         }
 
         let nonce = SystemTime::now()
@@ -147,7 +172,10 @@ impl ShmHandle {
 
         let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
 
-        Ok(Self { mmap })
+        Ok(Self {
+            mmap,
+            _lock_file: lock_file,
+        })
     }
 
     pub fn write(&mut self, telemetry: &mut TelemetryArchive) -> AuraResult<()> {

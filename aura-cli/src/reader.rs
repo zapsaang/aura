@@ -49,7 +49,8 @@ impl TelemetryReader {
 
     pub fn read(&self) -> AuraResult<TelemetryArchive> {
         let mut snapshot = unsafe {
-            read_double_buffer(self.mmap.as_ptr()).map_err(|()| AuraError::SeqLockInvalid)?
+            read_double_buffer(self.mmap.as_ptr() as *mut u8)
+                .map_err(|()| AuraError::SeqLockInvalid)?
         };
 
         let expected = snapshot.checksum;
