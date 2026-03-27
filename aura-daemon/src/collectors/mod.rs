@@ -108,7 +108,7 @@ impl CollectorState {
 
     pub fn maybe_shrink_maps(&mut self) {
         self.shrink_cycle = self.shrink_cycle.wrapping_add(1);
-        if self.shrink_cycle % SHRINK_INTERVAL != 0 {
+        if !self.shrink_cycle.is_multiple_of(SHRINK_INTERVAL) {
             return;
         }
         shrink_if_oversized(&mut self.prev_proc_ticks);

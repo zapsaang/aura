@@ -45,7 +45,7 @@ mod watchdog {
             let mut fd_ref = fd;
             // Magic close: 'V' (0x56) signals the kernel watchdog driver
             // to stop cleanly instead of triggering a system reset.
-            if fd_ref.write(&[b'V']).is_ok() {
+            if fd_ref.write(b"V").is_ok() {
                 info!("sent magic close to /dev/watchdog");
             }
         }
