@@ -75,11 +75,11 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
     };
 
     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
-    let final_seq = header.write_seq.load(Ordering::Acquire);
+    let final_seq = header.seq[1].load(Ordering::Acquire);
     let active = header.active_index.load(Ordering::Acquire);
     assert_eq!(
         final_seq, 2,
-        "expected two committed write sequence increments (odd+even per write), got seq {final_seq}"
+        "expected seq[1]=2 after one write (0->1->2), got {final_seq}"
     );
     assert_eq!(
         active, 1,
@@ -109,6 +109,102 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
     );
 }
 
+/// Regression test: reader reading buffer 0 must NOT be blocked by writer
+/// actively writing to buffer 1 (false contention bug).
+#[test]
+fn reader_not_blocked_by_writer_on_other_buffer() {
+    let tmp = TempDir::new().expect("create temp dir");
+    let path = tmp.path().join("aura-false-contention.dat");
+
+    let mut shm = ShmHandle::new(&path).expect("create shm handle");
+
+    // Write twice to cycle: first write->buffer1(active=1), second write->buffer0(active=0)
+    let mut archive = sample_archive();
+    archive.version = 42;
+    shm.write(&mut archive).expect("first write to buffer 1");
+    archive.version = 43;
+    shm.write(&mut archive).expect("second write to buffer 0");
+
+    // Manipulate header to simulate false contention:
+    // active=0 (reader reads buffer 0), seq[0]=2 (valid), seq[1]=1 (writer on buffer 1)
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("open shm for header manipulation");
+    let mut mmap = unsafe {
+        MmapOptions::new()
+            .len(SHM_SIZE)
+            .map_mut(&file)
+            .expect("mmap for header manipulation")
+    };
+
+    let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
+
+    // After two writes: active=0, seq[0]=2, seq[1]=2
+    assert_eq!(header.active_index.load(Ordering::Acquire), 0);
+
+    // Simulate writer mid-write to buffer 1: seq[1]=1 (odd)
+    // With NEW per-buffer seq: reader reading buffer 0 checks seq[0]=2 (even) -> succeeds
+    // With OLD single write_seq: writer writing to buffer 1 increments write_seq to odd -> reader fails
+    header.seq[1].store(1, Ordering::Release);
+
+    let reader = TelemetryReader::new(&path).expect("open reader");
+    let result = reader.read();
+
+    // NEW code succeeds: reader sees seq[0]=2 (even), writer is on buffer 1 not 0
+    // OLD code fails: write_seq is... wait, the old code doesn't have seq array
+    // The test using seq[1] will FAIL TO COMPILE until we implement the fix
+    assert!(
+        result.is_ok(),
+        "reader reading buffer 0 should succeed even when writer is mid-write to buffer 1"
+    );
+    assert_eq!(result.unwrap().version, 43);
+}
+
+/// Verifies that with per-buffer seq, reader IS blocked when writer
+/// is actively writing to the SAME buffer the reader is reading.
+#[test]
+fn reader_blocked_by_writer_on_same_buffer() {
+    let tmp = TempDir::new().expect("create temp dir");
+    let path = tmp.path().join("aura-same-buffer-contention.dat");
+
+    let mut shm = ShmHandle::new(&path).expect("create shm handle");
+
+    let mut archive = sample_archive();
+    archive.version = 77;
+    shm.write(&mut archive).expect("seed archive");
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("open shm for same-buffer test");
+    let mut mmap = unsafe {
+        MmapOptions::new()
+            .len(SHM_SIZE)
+            .map_mut(&file)
+            .expect("mmap for same-buffer test")
+    };
+
+    let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
+
+    // After first write: active=1, seq[1]=2
+    assert_eq!(header.active_index.load(Ordering::Acquire), 1);
+
+    // Simulate writer MID-WRITE to buffer 1: seq[1]=1 (odd)
+    header.seq[1].store(1, Ordering::Release);
+
+    let reader = TelemetryReader::new(&path).expect("open reader for same-buffer test");
+    let result = reader.read();
+
+    // Reader sees seq[1]=1 (odd), retries, fails -> correct behavior
+    assert!(
+        result.is_err(),
+        "reader reading buffer 1 should fail when writer is mid-write to buffer 1"
+    );
+}
+
 #[test]
 fn double_buffer_writer_advances_header_state() {
     let tmp = TempDir::new().expect("create temp dir");
@@ -132,9 +228,14 @@ fn double_buffer_writer_advances_header_state() {
 
     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
     assert_eq!(
-        header.write_seq.load(Ordering::Acquire),
-        4,
-        "two writes = 4 seq increments (2x odd+even)"
+        header.seq[0].load(Ordering::Acquire),
+        2,
+        "buffer 0: 0->1->2 after second write"
+    );
+    assert_eq!(
+        header.seq[1].load(Ordering::Acquire),
+        2,
+        "buffer 1: 0->1->2 after first write"
     );
     assert_eq!(header.active_index.load(Ordering::Acquire), 0);
 }

@@ -132,20 +132,20 @@ fn shm_layout_constants_are_stable() {
     let archive_size = size_of::<TelemetryArchive>();
 
     assert_eq!(
-        SHM_SIZE, 131088,
-        "SHM_SIZE = header(16) + 2*buffer(65536) for double-buffered IPC."
+        SHM_SIZE, 131096,
+        "SHM_SIZE = header(24) + 2*buffer(65536) for double-buffered IPC."
     );
     assert_eq!(
-        HEADER_SIZE, 16,
-        "Header is active_index + write_seq (2x u64)"
+        HEADER_SIZE, 24,
+        "Header is active_index(8) + seq[2](16) = 24 bytes"
     );
     assert_eq!(BUFFER_SIZE, 65536, "Each buffer holds one TelemetryArchive");
     assert_eq!(
-        BUFFER_0_OFFSET, 16,
+        BUFFER_0_OFFSET, 24,
         "Buffer 0 begins immediately after header"
     );
     assert_eq!(
-        BUFFER_1_OFFSET, 65552,
+        BUFFER_1_OFFSET, 65560,
         "Buffer 1 begins immediately after buffer 0"
     );
     assert_eq!(

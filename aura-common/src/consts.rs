@@ -4,7 +4,7 @@ pub const SHM_PATH: &str = "/dev/shm/aura_state.dat";
 #[cfg(target_os = "macos")]
 pub const SHM_PATH: &str = "/tmp/aura_state.dat";
 
-pub const HEADER_SIZE: usize = 16;
+pub const HEADER_SIZE: usize = 24; // active_index (8) + seq[2] (16)
 pub const BUFFER_SIZE: usize = 65536;
 pub const BUFFER_0_OFFSET: usize = HEADER_SIZE;
 pub const BUFFER_1_OFFSET: usize = HEADER_SIZE + BUFFER_SIZE;
