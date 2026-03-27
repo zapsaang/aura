@@ -1,6 +1,5 @@
 pub mod ansi;
 pub mod cpu;
-pub mod disk;
 pub mod mem;
 pub mod meta;
 pub mod net;
@@ -12,11 +11,10 @@ use crate::{ColorMode, Module};
 
 type Renderer = fn(ColorMode, &TelemetryArchive) -> String;
 
-const RENDERERS: [Renderer; 7] = [
+const RENDERERS: [Renderer; 6] = [
     cpu::render,
     mem::render,
     mem::render_swap,
-    disk::render,
     net::render,
     render_all,
     meta::render,
@@ -32,10 +30,9 @@ const fn module_index(module: Module) -> usize {
         Module::Cpu => 0,
         Module::Mem => 1,
         Module::Swap => 2,
-        Module::Disk => 3,
-        Module::Net => 4,
-        Module::All => 5,
-        Module::Os => 6,
+        Module::Net => 3,
+        Module::All => 4,
+        Module::Os => 5,
     }
 }
 
@@ -43,7 +40,6 @@ fn render_all(color: ColorMode, telemetry: &TelemetryArchive) -> String {
     [
         cpu::render(color, telemetry),
         mem::render(color, telemetry),
-        disk::render(color, telemetry),
         net::render(color, telemetry),
         meta::render(color, telemetry),
     ]

@@ -1,2 +1,0 @@
-/dev/vda1 / ext4 rw,relatime 0 0
-tmpfs /dev/shm tmpfs rw,nosuid,nodev 0 0

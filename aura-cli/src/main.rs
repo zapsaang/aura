@@ -30,7 +30,6 @@ pub enum Module {
     Cpu,
     Mem,
     Swap,
-    Disk,
     Net,
     All,
     Os,

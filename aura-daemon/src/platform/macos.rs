@@ -1,7 +1,8 @@
 use std::sync::OnceLock;
 
 use aura_common::{
-    system_page_size, AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStats,
+    system_page_size, AuraError, AuraResult, CpuGlobalStat, MemoryStats, MetaStats, OsFingerprint,
+    ProcessStats,
 };
 
 #[cfg(target_os = "macos")]
@@ -34,6 +35,38 @@ pub fn provider() -> AuraResult<&'static dyn PlatformStatsProvider> {
     PROVIDER.get().map(|p| p.as_ref()).ok_or_else(|| {
         AuraError::PlatformNotSupported("platform provider not initialized".to_string())
     })
+}
+
+#[cfg(target_os = "macos")]
+pub fn boot_time() -> AuraResult<u64> {
+    use std::mem::MaybeUninit;
+
+    let mut mib = [libc::CTL_KERN, libc::KERN_BOOTTIME];
+    let mut boot_time_val = MaybeUninit::<libc::timeval>::uninit();
+    let mut size = std::mem::size_of::<libc::timeval>();
+
+    let ret = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            boot_time_val.as_mut_ptr() as *mut _,
+            &mut size,
+            std::ptr::null(),
+            0,
+        )
+    };
+
+    if ret != 0 {
+        return Err(AuraError::PlatformNotSupported(
+            "sysctl kern.boottime failed".into(),
+        ));
+    }
+
+    let bt = unsafe { boot_time_val.assume_init() };
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+
+    let uptime = now.saturating_sub(bt.tv_sec as i64) as u64;
+    Ok(uptime)
 }
 
 #[cfg(target_os = "macos")]
@@ -638,6 +671,44 @@ const fn zero_core() -> CpuCoreStat {
         usage_percent: 0.0,
         _pad1: [0; 4],
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {
+    use std::process::Command;
+
+    let mut os = OsFingerprint {
+        os_type: FixedString16::from_bytes(b"darwin"),
+        os_id: FixedString16::new(),
+        os_version_id: FixedString16::new(),
+        os_pretty_name: [0; 128],
+    };
+
+    if let Ok(output) = Command::new("sw_vers").output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if let Some((key, value)) = line.split_once(':') {
+                let key = key.trim();
+                let value = value.trim();
+                match key {
+                    "ProductVersion" => {
+                        os.os_version_id = FixedString16::from_bytes(value.as_bytes());
+                    }
+                    "ProductName" => {
+                        let n = value.len().min(128);
+                        os.os_pretty_name[..n].copy_from_slice(&value.as_bytes()[..n]);
+                    }
+                    "BuildVersion" => {
+                        os.os_id = FixedString16::from_bytes(value.as_bytes());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    meta.os = os;
+    Ok(())
 }
 
 #[cfg(test)]

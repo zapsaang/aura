@@ -16,12 +16,7 @@ fn test_collect_all_has_no_cfg_macros_in_body() {
 
 #[test]
 fn test_all_collector_modules_exist() {
-    use aura_daemon::collectors::{cpu, disk, memory, network};
+    use aura_daemon::collectors::{cpu, memory, network};
 
-    let _ = (
-        cpu::collect,
-        memory::collect,
-        disk::collect,
-        network::collect,
-    );
+    let _ = (cpu::collect, memory::collect, network::collect);
 }

@@ -13,8 +13,6 @@ pub struct TelemetryJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     memory: Option<MemoryStatsJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    storage: Option<StorageStatsJson>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     network: Option<NetworkStatsJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     meta: Option<MetaStatsJson>,
@@ -77,31 +75,6 @@ struct MemoryStatsJson {
 }
 
 #[derive(Serialize)]
-struct StorageStatsJson {
-    disks: Vec<DiskStatJson>,
-    mounts: Vec<MountStatJson>,
-}
-
-#[derive(Serialize)]
-struct DiskStatJson {
-    name: String,
-    rx_bytes: u64,
-    wx_bytes: u64,
-    rx_per_sec: f32,
-    wx_per_sec: f32,
-}
-
-#[derive(Serialize)]
-struct MountStatJson {
-    mountpoint: String,
-    fstype: String,
-    total: u64,
-    available: u64,
-    used: u64,
-    percent: f32,
-}
-
-#[derive(Serialize)]
 struct NetworkStatsJson {
     interfaces: Vec<NetIfStatJson>,
 }
@@ -156,7 +129,6 @@ impl TelemetryJson {
     fn from_telemetry(module: Module, telemetry: &TelemetryArchive) -> Self {
         let include_cpu = matches!(module, Module::All | Module::Cpu);
         let include_mem = matches!(module, Module::All | Module::Mem | Module::Swap);
-        let include_disk = matches!(module, Module::All | Module::Disk);
         let include_net = matches!(module, Module::All | Module::Net);
         let include_meta = matches!(module, Module::All | Module::Os);
         let include_rest = matches!(module, Module::All);
@@ -166,7 +138,6 @@ impl TelemetryJson {
             cpu: include_cpu.then(|| cpu_to_json(telemetry)),
             process: include_rest.then(|| process_to_json(telemetry)),
             memory: include_mem.then(|| memory_to_json(telemetry)),
-            storage: include_disk.then(|| storage_to_json(telemetry)),
             network: include_net.then(|| network_to_json(telemetry)),
             meta: include_meta.then(|| meta_to_json(telemetry)),
             gpu: include_rest.then(|| gpu_to_json(telemetry)),
@@ -240,37 +211,6 @@ fn memory_to_json(telemetry: &TelemetryArchive) -> MemoryStatsJson {
         swap_used: memory.swap_used,
         page_faults: memory.page_faults,
         page_faults_per_sec: memory.page_faults_per_sec,
-    }
-}
-
-fn storage_to_json(telemetry: &TelemetryArchive) -> StorageStatsJson {
-    let storage = &telemetry.storage;
-    StorageStatsJson {
-        disks: (0..storage.disk_count as usize)
-            .map(|idx| {
-                let disk = &storage.disks[idx];
-                DiskStatJson {
-                    name: disk.name.as_str().to_string(),
-                    rx_bytes: disk.rx_bytes,
-                    wx_bytes: disk.wx_bytes,
-                    rx_per_sec: disk.rx_per_sec,
-                    wx_per_sec: disk.wx_per_sec,
-                }
-            })
-            .collect(),
-        mounts: (0..storage.mount_count as usize)
-            .map(|idx| {
-                let mount = &storage.mounts[idx];
-                MountStatJson {
-                    mountpoint: trim_zero_terminated(&mount.mountpoint),
-                    fstype: mount.fstype.as_str().to_string(),
-                    total: mount.total,
-                    available: mount.available,
-                    used: mount.used,
-                    percent: mount.percent,
-                }
-            })
-            .collect(),
     }
 }
 

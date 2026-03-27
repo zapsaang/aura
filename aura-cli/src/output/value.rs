@@ -25,32 +25,6 @@ fn get_swap_val(telemetry: &TelemetryArchive) -> f32 {
     }
 }
 
-fn get_disk_val(telemetry: &TelemetryArchive) -> f32 {
-    let storage = &telemetry.storage;
-    if storage.disk_count > 0 {
-        storage
-            .disks
-            .iter()
-            .take(storage.disk_count as usize)
-            .map(|d| d.rx_per_sec + d.wx_per_sec)
-            .sum()
-    } else if storage.mount_count > 0 {
-        let (total_used, total_cap) = storage
-            .mounts
-            .iter()
-            .take(storage.mount_count as usize)
-            .fold((0u64, 0u64), |acc, m| (acc.0 + m.used, acc.1 + m.total));
-
-        if total_cap > 0 {
-            total_used as f32 / total_cap as f32 * 100.0
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    }
-}
-
 fn get_net_val(telemetry: &TelemetryArchive) -> f32 {
     let net = &telemetry.network;
     net.interfaces
@@ -81,10 +55,7 @@ pub fn render(module: Module, telemetry: &TelemetryArchive) -> String {
         Module::Cpu => format!("{:>3}", get_cpu_val(telemetry).round() as u32),
         Module::Mem => format!("{:>3}", get_mem_val(telemetry).round() as u32),
         Module::Swap => format!("{:>3}", get_swap_val(telemetry).round() as u32),
-
-        Module::Disk => format_compact(get_disk_val(telemetry)),
         Module::Net => format_compact(get_net_val(telemetry)),
-
         Module::Os => {
             let meta = &telemetry.meta;
             os_logo(meta.os.os_id.as_str(), meta.os.os_type.as_str()).to_string()
@@ -93,7 +64,6 @@ pub fn render(module: Module, telemetry: &TelemetryArchive) -> String {
             format!("{:>3}", get_cpu_val(telemetry).round() as u32),
             format!("{:>3}", get_mem_val(telemetry).round() as u32),
             format!("{:>3}", get_swap_val(telemetry).round() as u32),
-            format_compact(get_disk_val(telemetry)),
             format_compact(get_net_val(telemetry)),
         ]
         .join("\n"),
