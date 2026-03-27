@@ -53,11 +53,11 @@ impl ShmHandle {
                     )));
                 }
 
-                let mode = stat.st_mode & 0o777;
-                if mode != SHM_FILE_MODE {
+                let raw_mode = stat.st_mode & 0o777;
+                if raw_mode != SHM_FILE_MODE as _ {
                     return Err(AuraError::Security(format!(
                         "SHM has mode {:o}, expected {:o}",
-                        mode, SHM_FILE_MODE
+                        raw_mode, SHM_FILE_MODE
                     )));
                 }
 

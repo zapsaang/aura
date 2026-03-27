@@ -12,6 +12,7 @@ use tempfile::TempDir;
 
 struct TelemetryReader {
     mmap: Mmap,
+    #[allow(dead_code)]
     path: PathBuf,
 }
 
