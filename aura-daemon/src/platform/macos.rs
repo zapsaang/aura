@@ -51,7 +51,7 @@ pub fn boot_time() -> AuraResult<u64> {
             mib.len() as libc::c_uint,
             boot_time_val.as_mut_ptr() as *mut _,
             &mut size,
-            std::ptr::null(),
+            std::ptr::null_mut(),
             0,
         )
     };
