@@ -10,6 +10,8 @@ pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {
         os_type: FixedString16::from_bytes(b"linux"),
         os_id: FixedString16::new(),
         os_version_id: FixedString16::new(),
+        version_codename: FixedString16::new(),
+        version: [0; 64],
         os_pretty_name: [0; 128],
     };
 
@@ -180,6 +182,8 @@ mod tests {
             os_type: FixedString16::new(),
             os_id: FixedString16::new(),
             os_version_id: FixedString16::new(),
+            version_codename: FixedString16::new(),
+            version: [0; 64],
             os_pretty_name: [0; 128],
         };
         parse_os_release(fixture, &mut os);

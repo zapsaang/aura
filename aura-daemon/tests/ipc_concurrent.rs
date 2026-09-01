@@ -190,7 +190,7 @@ fn run_reader_loop(
         match read_snapshot_once(&mmap, read_timeout, &mut stats) {
             Ok(snapshot) => {
                 stats.successful_reads = stats.successful_reads.saturating_add(1);
-                stats.max_seen_version = stats.max_seen_version.max(snapshot.version);
+                stats.max_seen_version = stats.max_seen_version.max(snapshot.meta.timestamp_ns);
             }
             Err(ReadErrorKind::ChecksumMismatch) => {
                 stats.checksum_failures = stats.checksum_failures.saturating_add(1);
@@ -208,7 +208,7 @@ fn run_reader_loop(
         match read_snapshot_once(&mmap, read_timeout, &mut stats) {
             Ok(snapshot) => {
                 stats.successful_reads = stats.successful_reads.saturating_add(1);
-                stats.max_seen_version = stats.max_seen_version.max(snapshot.version);
+                stats.max_seen_version = stats.max_seen_version.max(snapshot.meta.timestamp_ns);
             }
             Err(ReadErrorKind::ChecksumMismatch) => {
                 stats.checksum_failures = stats.checksum_failures.saturating_add(1);

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use aura_common::{
-    monotonic_ns, read_double_buffer, AuraError, AuraResult, TelemetryArchive, SHM_FILE_MODE,
-    SHM_SIZE,
+    monotonic_ns, read_double_buffer, validate_archive, AuraError, AuraResult, TelemetryArchive,
+    ARCHIVE_VERSION, SHM_FILE_MODE, SHM_SIZE,
 };
 use memmap2::{Mmap, MmapOptions};
 
@@ -55,6 +55,12 @@ impl TelemetryReader {
                 .map_err(|()| AuraError::SeqLockInvalid)?
         };
 
+        if snapshot.version != ARCHIVE_VERSION {
+            return Err(AuraError::UnsupportedVersion {
+                found: snapshot.version,
+            });
+        }
+
         let expected = snapshot.checksum;
         snapshot.checksum = 0;
         let actual = snapshot.calculate_checksum();
@@ -63,6 +69,8 @@ impl TelemetryReader {
         if expected != actual {
             return Err(AuraError::ChecksumMismatch { expected, actual });
         }
+
+        validate_archive(&snapshot)?;
 
         Ok(snapshot)
     }
@@ -102,9 +110,9 @@ mod tests {
 
     use aura_common::{
         write_double_buffer, AuraError, CpuCoreStat, CpuGlobalStat, DoubleBufferHeader,
-        FixedString16, GpuStat, GpuStats, MemoryStats, MetaStats, NetIfStat, NetworkStats,
-        OsFingerprint, ProcessStat, ProcessStats, StorageStats, TelemetryArchive, BUFFER_0_OFFSET,
-        BUFFER_1_OFFSET, MAX_CORES, MAX_DISKS, MAX_MOUNTS, MAX_NETIFS, MAX_TOP_N, SHM_SIZE,
+        FixedString16, GpuStat, GpuStats, NetIfStat, NetworkStats, ProcessStat, ProcessStats,
+        StorageStats, TelemetryArchive, BUFFER_0_OFFSET, BUFFER_1_OFFSET, MAX_CORES, MAX_DISKS,
+        MAX_MOUNTS, MAX_NETIFS, MAX_TOP_N, SHM_SIZE,
     };
     use memmap2::MmapOptions;
 
@@ -217,7 +225,9 @@ mod tests {
     fn sample_telemetry(cpu_usage: f32) -> TelemetryArchive {
         // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
         let mut t = unsafe { std::mem::zeroed::<TelemetryArchive>() };
-        t.version = 1;
+        t.version = aura_common::ARCHIVE_VERSION;
+        t.capabilities = aura_common::CAP_CPU_GLOBAL;
+        t.meta.timestamp_ns = 1;
         t.cpu = CpuGlobalStat {
             user_ticks: 100,
             system_ticks: 50,
@@ -233,10 +243,10 @@ mod tests {
                 system_ticks: 0,
                 idle_ticks: 0,
                 total_ticks: 0,
-                usage_percent: cpu_usage,
+                usage_percent: 0.0,
                 _pad1: [0; 4],
             }; MAX_CORES],
-            core_count: 1,
+            core_count: 0,
             _pad0: [0; 7],
         };
         t.process = ProcessStats {
@@ -256,19 +266,10 @@ mod tests {
                 memory_bytes: 0,
                 comm: FixedString16::new(),
             }; MAX_TOP_N],
-        };
-        t.memory = MemoryStats {
-            ram_total: 1,
-            ram_free: 1,
-            ram_used: 0,
-            buffers: 0,
-            cached: 0,
-            swap_total: 0,
-            swap_free: 0,
-            swap_used: 0,
-            page_faults: 0,
-            page_faults_per_sec: 0.0,
-            _pad0: [0; 4],
+            top_cpu_count: 0,
+            top_mem_count: 0,
+            flags: 0,
+            _pad0: [0; 5],
         };
         t.storage = StorageStats {
             disks: [
@@ -277,14 +278,16 @@ mod tests {
                 MAX_DISKS
             ],
             disk_count: 0,
-            _pad0: [0; 7],
+            disk_truncated: 0,
+            _pad0: [0; 6],
             mounts: [
                 // SAFETY: `MountStat` derives `bytemuck::Zeroable`, so an all-zero mount entry is valid.
                 unsafe { std::mem::zeroed() };
                 MAX_MOUNTS
             ],
             mount_count: 0,
-            _pad1: [0; 6],
+            mount_truncated: 0,
+            _pad1: [0; 5],
         };
         t.network = NetworkStats {
             interfaces: [NetIfStat {
@@ -295,22 +298,8 @@ mod tests {
                 tx_bytes_per_sec: 0.0,
             }; MAX_NETIFS],
             if_count: 0,
-            _pad0: [0; 7],
-        };
-        t.meta = MetaStats {
-            timestamp_ns: 0,
-            uptime_secs: 0,
-            load_avg_1m: 0.0,
-            load_avg_5m: 0.0,
-            load_avg_15m: 0.0,
-            timezone_name: [0; 8],
-            timezone_offset_secs: 0,
-            os: OsFingerprint {
-                os_type: FixedString16::new(),
-                os_id: FixedString16::new(),
-                os_version_id: FixedString16::new(),
-                os_pretty_name: [0; 128],
-            },
+            truncated: 0,
+            _pad0: [0; 6],
         };
         t.gpu = GpuStats {
             gpus: [GpuStat {
@@ -321,11 +310,14 @@ mod tests {
                 power_watts: 0.0,
                 temperature_celsius: 0,
                 available: 0,
-                _pad0: [0; 5],
+                tone: 0,
+                _pad0: [0; 4],
+                capabilities: 0,
             }; 8],
             gpu_count: 0,
             nvml_available: 0,
-            _pad0: [0; 6],
+            truncated: 0,
+            _pad0: [0; 5],
         };
         t
     }

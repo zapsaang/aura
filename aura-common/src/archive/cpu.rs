@@ -1,7 +1,7 @@
 use super::MAX_CORES;
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CpuCoreStat {
     pub core_index: u8,
     pub _pad0: [u8; 7],
@@ -14,7 +14,7 @@ pub struct CpuCoreStat {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CpuGlobalStat {
     pub user_ticks: u64,
     pub system_ticks: u64,

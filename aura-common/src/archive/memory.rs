@@ -1,5 +1,5 @@
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MemoryStats {
     pub ram_total: u64,
     pub ram_free: u64,

@@ -35,6 +35,8 @@ pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {
         os_type: FixedString16::from_bytes(b"darwin"),
         os_id: FixedString16::new(),
         os_version_id: FixedString16::new(),
+        version_codename: FixedString16::new(),
+        version: [0; 64],
         os_pretty_name: [0; 128],
     };
     if let Ok(output) = Command::new("sw_vers").output() {

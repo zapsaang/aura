@@ -191,6 +191,7 @@ impl ShmHandle {
     }
 
     pub fn write(&mut self, telemetry: &mut TelemetryArchive) -> AuraResult<()> {
+        telemetry.version = aura_common::ARCHIVE_VERSION;
         telemetry.checksum = 0;
         telemetry.checksum = telemetry.calculate_checksum();
         // SAFETY: `self.mmap` is a writable `SHM_SIZE` mapping with the expected header and archive buffers; `telemetry` is initialized.

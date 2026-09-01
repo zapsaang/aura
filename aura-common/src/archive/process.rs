@@ -1,7 +1,7 @@
 use super::{FixedString16, MAX_TOP_N};
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessStat {
     pub pid: u32,
     pub cpu_usage: f32,
@@ -10,7 +10,7 @@ pub struct ProcessStat {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessStats {
     pub total: u32,
     pub running: u32,
@@ -18,4 +18,8 @@ pub struct ProcessStats {
     pub sleeping: u32,
     pub top_cpu: [ProcessStat; MAX_TOP_N],
     pub top_mem: [ProcessStat; MAX_TOP_N],
+    pub top_cpu_count: u8,
+    pub top_mem_count: u8,
+    pub flags: u8,
+    pub _pad0: [u8; 5],
 }

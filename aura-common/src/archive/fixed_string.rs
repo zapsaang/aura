@@ -1,5 +1,5 @@
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FixedString16 {
     pub bytes: [u8; 16],
 }

@@ -1,16 +1,16 @@
 use aura_common::{AuraResult, GpuStats};
 
-#[cfg(feature = "gpu-nvml")]
+#[cfg(all(feature = "gpu-nvml", target_os = "linux"))]
 mod imp {
     use std::sync::{Mutex, OnceLock};
 
     use aura_common::{AuraResult, FixedString16, GpuStat, GpuStats};
     use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
-    use nvml_wrapper::NVML;
+    use nvml_wrapper::Nvml;
 
-    static NVML_INSTANCE: OnceLock<Mutex<Option<NVML>>> = OnceLock::new();
+    static NVML_INSTANCE: OnceLock<Mutex<Option<Nvml>>> = OnceLock::new();
 
-    fn nvml_store() -> &'static Mutex<Option<NVML>> {
+    fn nvml_store() -> &'static Mutex<Option<Nvml>> {
         NVML_INSTANCE.get_or_init(|| Mutex::new(None))
     }
 
@@ -18,7 +18,7 @@ mod imp {
         gpu.gpu_count = 0;
         gpu.nvml_available = 0;
 
-        let nvml = match NVML::init() {
+        let nvml = match Nvml::init() {
             Ok(n) => n,
             Err(_) => return Ok(()),
         };
@@ -57,25 +57,33 @@ mod imp {
                 power_watts: 0.0,
                 temperature_celsius: 0,
                 available: 1,
-                _pad0: [0; 5],
+                tone: 0,
+                _pad0: [0; 4],
+                capabilities: 0,
             };
 
             if let Ok(device) = nvml.device_by_index(i as u32) {
                 if let Ok(name) = device.name() {
                     stat.name = FixedString16::from_bytes(name.as_bytes());
+                    stat.capabilities |= aura_common::GPU_CAP_NAME;
                 }
                 if let Ok(memory) = device.memory_info() {
                     stat.memory_total = memory.total;
                     stat.memory_used = memory.used;
+                    stat.capabilities |=
+                        aura_common::GPU_CAP_MEMORY_TOTAL | aura_common::GPU_CAP_MEMORY_USED;
                 }
                 if let Ok(util) = device.utilization_rates() {
                     stat.utilization_percent = util.gpu as f32;
+                    stat.capabilities |= aura_common::GPU_CAP_UTILIZATION;
                 }
                 if let Ok(power_mw) = device.power_usage() {
                     stat.power_watts = power_mw as f32 / 1000.0;
+                    stat.capabilities |= aura_common::GPU_CAP_POWER;
                 }
                 if let Ok(temp) = device.temperature(TemperatureSensor::Gpu) {
                     stat.temperature_celsius = temp as i16;
+                    stat.capabilities |= aura_common::GPU_CAP_TEMPERATURE;
                 }
             } else {
                 stat.available = 0;
@@ -89,7 +97,7 @@ mod imp {
     }
 }
 
-#[cfg(not(feature = "gpu-nvml"))]
+#[cfg(not(all(feature = "gpu-nvml", target_os = "linux")))]
 mod imp {
     use aura_common::{AuraResult, GpuStats};
 

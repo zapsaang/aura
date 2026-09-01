@@ -134,9 +134,9 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
 
     // Write twice to cycle: first write->buffer1(active=1), second write->buffer0(active=0)
     let mut archive = sample_archive();
-    archive.version = 42;
+    archive.meta.timestamp_ns = 42;
     shm.write(&mut archive).expect("first write to buffer 1");
-    archive.version = 43;
+    archive.meta.timestamp_ns = 43;
     shm.write(&mut archive).expect("second write to buffer 0");
 
     // Manipulate header to simulate false contention:
@@ -175,7 +175,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
         result.is_ok(),
         "reader reading buffer 0 should succeed even when writer is mid-write to buffer 1"
     );
-    assert_eq!(result.unwrap().version, 43);
+    assert_eq!(result.unwrap().meta.timestamp_ns, 43);
 }
 
 /// Verifies that with per-buffer seq, reader IS blocked when writer
@@ -311,12 +311,12 @@ fn assert_archive_fields_equal(expected: &TelemetryArchive, actual: &TelemetryAr
     assert_eq!(actual.storage.disk_count, expected.storage.disk_count);
     assert_eq!(actual.storage.mount_count, expected.storage.mount_count);
     assert_eq!(
-        actual.storage.disks[0].rx_bytes,
-        expected.storage.disks[0].rx_bytes
+        actual.storage.disks[0].read_bytes,
+        expected.storage.disks[0].read_bytes
     );
     assert_eq!(
-        actual.storage.disks[0].wx_bytes,
-        expected.storage.disks[0].wx_bytes
+        actual.storage.disks[0].write_bytes,
+        expected.storage.disks[0].write_bytes
     );
 
     assert_eq!(actual.network.if_count, expected.network.if_count);
@@ -427,10 +427,10 @@ fn sample_archive() -> TelemetryArchive {
 
     t.storage.disk_count = 1;
     t.storage.disks[0].name = FixedString16::from_bytes(b"nvme0n1");
-    t.storage.disks[0].rx_bytes = 55_000;
-    t.storage.disks[0].wx_bytes = 77_000;
-    t.storage.disks[0].rx_per_sec = 512.0;
-    t.storage.disks[0].wx_per_sec = 768.0;
+    t.storage.disks[0].read_bytes = 55_000;
+    t.storage.disks[0].write_bytes = 77_000;
+    t.storage.disks[0].read_bytes_per_sec = 512.0;
+    t.storage.disks[0].write_bytes_per_sec = 768.0;
     t.storage.mount_count = 1;
     t.storage.mounts[0].mountpoint[0] = b'/';
     t.storage.mounts[0].fstype = FixedString16::from_bytes(b"ext4");

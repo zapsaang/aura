@@ -12,6 +12,7 @@ pub struct DoubleBufferHeader {
 }
 
 const ARCHIVE_SIZE: usize = std::mem::size_of::<TelemetryArchive>();
+#[allow(clippy::assertions_on_constants)]
 const _: () = assert!(
     ARCHIVE_SIZE % 8 == 0,
     "TelemetryArchive must be 8-byte aligned for atomic copy"

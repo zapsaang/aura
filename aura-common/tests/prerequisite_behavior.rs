@@ -26,14 +26,15 @@ fn aligned_shm() -> (Vec<u64>, *mut u8) {
 fn archive_layout_matches_current_shared_memory_contract() {
     assert_eq!(size_of::<TelemetryArchive>(), 65_536);
     assert_eq!(align_of::<TelemetryArchive>(), 8);
-    assert_eq!(checksum_offset(), 18_264);
+    assert_eq!(checksum_offset(), 18_968);
     assert_eq!(size_of::<TelemetryArchive>() % 8, 0);
 }
 
 #[test]
 fn zeroed_archive_checksum_matches_current_crc_contract() {
-    let archive = TelemetryArchive::zeroed();
-    assert_eq!(archive.calculate_checksum(), 0xed26_7405);
+    let mut archive = TelemetryArchive::zeroed();
+    archive.version = aura_common::ARCHIVE_VERSION;
+    assert_eq!(archive.calculate_checksum(), 0xe11d_ad37);
 }
 
 #[test]

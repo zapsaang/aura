@@ -152,7 +152,8 @@ mod tests {
                 tx_bytes_per_sec: 0.0,
             }; MAX_NETIFS],
             if_count: 0,
-            _pad0: [0; 7],
+            truncated: 0,
+            _pad0: [0; 6],
         };
         parse_net_dev(fixture, &mut stats.interfaces, &mut stats.if_count).expect("parse");
 

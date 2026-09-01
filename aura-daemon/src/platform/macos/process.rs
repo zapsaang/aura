@@ -113,6 +113,10 @@ pub(super) fn collect(platform: &MacosPlatform) -> AuraResult<ProcessStats> {
         sleeping: 0,
         top_cpu: [zero_process(); MAX_TOP_N],
         top_mem: [zero_process(); MAX_TOP_N],
+        top_cpu_count: 0,
+        top_mem_count: 0,
+        flags: 0,
+        _pad0: [0; 5],
     };
     let pid_cap = 4096usize;
     let mut pids = vec![0u32; pid_cap];

@@ -1,7 +1,7 @@
 use super::{FixedString16, MAX_NETIFS};
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NetIfStat {
     pub name: FixedString16,
     pub rx_bytes: u64,
@@ -11,9 +11,10 @@ pub struct NetIfStat {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NetworkStats {
     pub interfaces: [NetIfStat; MAX_NETIFS],
     pub if_count: u8,
-    pub _pad0: [u8; 7],
+    pub truncated: u8,
+    pub _pad0: [u8; 6],
 }

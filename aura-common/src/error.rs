@@ -31,6 +31,12 @@ pub enum AuraError {
 
     #[error("Another aura-daemon instance is already running (SHM file locked)")]
     AlreadyRunning,
+
+    #[error("unsupported archive version {found} (expected 2)")]
+    UnsupportedVersion { found: u64 },
+
+    #[error("invalid archive: {reason}")]
+    InvalidArchive { reason: String },
 }
 
 pub type AuraResult<T> = Result<T, AuraError>;

@@ -1,13 +1,12 @@
 mod format;
 mod output;
-mod reader;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
+use aura_cli::reader::TelemetryReader;
 use aura_common::{AuraError, AuraResult, OFFLINE_THRESHOLD_SECS, SHM_PATH};
 use clap::{Parser, ValueEnum};
-use reader::TelemetryReader;
 
 #[derive(Parser, Debug)]
 #[command(author, version = env!("GIT_VERSION"), about = "AURA CLI telemetry consumer")]
