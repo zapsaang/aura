@@ -1,3 +1,9 @@
+#[cfg(not(target_endian = "little"))]
+compile_error!("AURA shared-memory archives require a little-endian target");
+
+#[cfg(not(target_has_atomic = "64"))]
+compile_error!("AURA shared-memory archives require native 64-bit atomics");
+
 pub mod archive;
 pub mod consts;
 pub mod double_buffer;

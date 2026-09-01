@@ -1,132 +1,14 @@
-use aura_common::{bytes_to_string, AuraError, AuraResult, TelemetryArchive};
-use serde::Serialize;
+use aura_common::{bytes_to_string, TelemetryArchive};
 
+use super::schema::{
+    CpuCoreStatJson, CpuGlobalStatJson, GpuStatJson, GpuStatsJson, MemoryStatsJson, MetaStatsJson,
+    NetIfStatJson, NetworkStatsJson, OsFingerprintJson, ProcessStatJson, ProcessStatsJson,
+    TelemetryJson,
+};
 use crate::Module;
 
-#[derive(Serialize)]
-pub struct TelemetryJson {
-    version: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cpu: Option<CpuGlobalStatJson>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    process: Option<ProcessStatsJson>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory: Option<MemoryStatsJson>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    network: Option<NetworkStatsJson>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    meta: Option<MetaStatsJson>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gpu: Option<GpuStatsJson>,
-}
-
-#[derive(Serialize)]
-struct CpuGlobalStatJson {
-    user_ticks: u64,
-    system_ticks: u64,
-    idle_ticks: u64,
-    total_ticks: u64,
-    context_switches: u64,
-    context_switches_per_sec: f32,
-    usage_percent: f32,
-    cores: Vec<CpuCoreStatJson>,
-}
-
-#[derive(Serialize)]
-struct CpuCoreStatJson {
-    core_index: u8,
-    user_ticks: u64,
-    system_ticks: u64,
-    idle_ticks: u64,
-    total_ticks: u64,
-    usage_percent: f32,
-}
-
-#[derive(Serialize)]
-struct ProcessStatsJson {
-    total: u32,
-    running: u32,
-    blocked: u32,
-    sleeping: u32,
-    top_cpu: Vec<ProcessStatJson>,
-    top_mem: Vec<ProcessStatJson>,
-}
-
-#[derive(Serialize)]
-struct ProcessStatJson {
-    pid: u32,
-    cpu_usage: f32,
-    memory_bytes: u64,
-    comm: String,
-}
-
-#[derive(Serialize)]
-struct MemoryStatsJson {
-    ram_total: u64,
-    ram_free: u64,
-    ram_used: u64,
-    buffers: u64,
-    cached: u64,
-    swap_total: u64,
-    swap_free: u64,
-    swap_used: u64,
-    page_faults: u64,
-    page_faults_per_sec: f32,
-}
-
-#[derive(Serialize)]
-struct NetworkStatsJson {
-    interfaces: Vec<NetIfStatJson>,
-}
-
-#[derive(Serialize)]
-struct NetIfStatJson {
-    name: String,
-    rx_bytes: u64,
-    tx_bytes: u64,
-    rx_bytes_per_sec: f32,
-    tx_bytes_per_sec: f32,
-}
-
-#[derive(Serialize)]
-struct MetaStatsJson {
-    timestamp_ns: u64,
-    uptime_secs: u64,
-    load_avg_1m: f32,
-    load_avg_5m: f32,
-    load_avg_15m: f32,
-    timezone_name: String,
-    timezone_offset_secs: i32,
-    os: OsFingerprintJson,
-}
-
-#[derive(Serialize)]
-struct OsFingerprintJson {
-    os_type: String,
-    os_id: String,
-    os_version_id: String,
-    os_pretty_name: String,
-}
-
-#[derive(Serialize)]
-struct GpuStatsJson {
-    nvml_available: bool,
-    gpus: Vec<GpuStatJson>,
-}
-
-#[derive(Serialize)]
-struct GpuStatJson {
-    name: String,
-    memory_total: u64,
-    memory_used: u64,
-    utilization_percent: f32,
-    power_watts: f32,
-    temperature_celsius: i16,
-    available: bool,
-}
-
 impl TelemetryJson {
-    fn from_telemetry(module: Module, telemetry: &TelemetryArchive) -> Self {
+    pub(super) fn from_telemetry(module: Module, telemetry: &TelemetryArchive) -> Self {
         let include_cpu = matches!(module, Module::All | Module::Cpu);
         let include_mem = matches!(module, Module::All | Module::Mem | Module::Swap);
         let include_net = matches!(module, Module::All | Module::Net);
@@ -143,12 +25,6 @@ impl TelemetryJson {
             gpu: include_rest.then(|| gpu_to_json(telemetry)),
         }
     }
-}
-
-pub fn render(module: Module, telemetry: &TelemetryArchive) -> AuraResult<String> {
-    let json = TelemetryJson::from_telemetry(module, telemetry);
-    serde_json::to_string_pretty(&json)
-        .map_err(|e| AuraError::ParseError(format!("failed to serialize JSON output: {e}")))
 }
 
 fn cpu_to_json(telemetry: &TelemetryArchive) -> CpuGlobalStatJson {

@@ -1,4 +1,5 @@
 use std::fs::OpenOptions;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -14,6 +15,15 @@ struct TelemetryReader {
     mmap: Mmap,
     #[allow(dead_code)]
     path: PathBuf,
+}
+
+fn checksum_offset() -> usize {
+    let uninit = MaybeUninit::<TelemetryArchive>::uninit();
+    let base = uninit.as_ptr();
+    // SAFETY: `addr_of!` forms a raw field pointer without reading the
+    // uninitialized archive, and both pointers share one allocation.
+    let field = unsafe { std::ptr::addr_of!((*base).checksum) };
+    field as usize - base as usize
 }
 
 impl TelemetryReader {
@@ -95,7 +105,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
     } else {
         BUFFER_1_OFFSET
     };
-    let checksum_offset = active_offset + std::mem::offset_of!(TelemetryArchive, checksum);
+    let checksum_offset = active_offset + checksum_offset();
     let stored_checksum = u32::from_le_bytes([
         mmap[checksum_offset],
         mmap[checksum_offset + 1],

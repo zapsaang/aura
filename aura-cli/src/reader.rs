@@ -97,6 +97,7 @@ impl TelemetryReader {
 #[cfg(test)]
 mod tests {
     use std::fs::OpenOptions;
+    use std::mem::MaybeUninit;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use aura_common::{
@@ -108,6 +109,15 @@ mod tests {
     use memmap2::MmapOptions;
 
     use super::TelemetryReader;
+
+    fn checksum_offset() -> usize {
+        let uninit = MaybeUninit::<TelemetryArchive>::uninit();
+        let base = uninit.as_ptr();
+        // SAFETY: `addr_of!` forms a raw field pointer without reading the
+        // uninitialized archive, and both pointers share one allocation.
+        let field = unsafe { std::ptr::addr_of!((*base).checksum) };
+        field as usize - base as usize
+    }
 
     #[test]
     fn read_returns_snapshot_from_active_buffer() {
@@ -143,9 +153,7 @@ mod tests {
         };
         // SAFETY: `active_offset` selects an in-bounds archive buffer and the checksum field offset is aligned for `u32`.
         unsafe {
-            let checksum_ptr = base
-                .add(active_offset + std::mem::offset_of!(TelemetryArchive, checksum))
-                .cast::<u32>();
+            let checksum_ptr = base.add(active_offset + checksum_offset()).cast::<u32>();
             *checksum_ptr = 0;
         }
         mmap.flush().unwrap();

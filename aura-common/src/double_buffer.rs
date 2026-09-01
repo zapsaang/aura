@@ -13,9 +13,27 @@ pub struct DoubleBufferHeader {
 
 const ARCHIVE_SIZE: usize = std::mem::size_of::<TelemetryArchive>();
 const _: () = assert!(
-    ARCHIVE_SIZE.is_multiple_of(8),
+    ARCHIVE_SIZE % 8 == 0,
     "TelemetryArchive must be 8-byte aligned for atomic copy"
 );
+
+#[inline]
+unsafe fn load_aligned_atomic_u64(src: *const u64) -> u64 {
+    debug_assert_eq!(src.align_offset(std::mem::align_of::<AtomicU64>()), 0);
+    let atomic = src.cast::<AtomicU64>();
+    // SAFETY: the caller guarantees that `src` is aligned, initialized, and
+    // concurrently accessed only through atomic operations.
+    unsafe { (*atomic).load(Ordering::Relaxed) }
+}
+
+#[inline]
+unsafe fn store_aligned_atomic_u64(dst: *mut u64, value: u64) {
+    debug_assert_eq!(dst.align_offset(std::mem::align_of::<AtomicU64>()), 0);
+    let atomic = dst.cast::<AtomicU64>();
+    // SAFETY: the caller guarantees that `dst` is aligned, writable, and
+    // concurrently accessed only through atomic operations.
+    unsafe { (*atomic).store(value, Ordering::Relaxed) };
+}
 
 /// Atomically read `len` bytes from shared memory using Relaxed u64 loads.
 /// Each u64 is read atomically, preventing torn reads under concurrent writes.
@@ -26,16 +44,16 @@ const _: () = assert!(
 /// - `len` must be a multiple of 8
 /// - `src` must not be modified by non-atomic operations while this runs
 #[inline]
-unsafe fn atomic_read_shm(src: *mut u8, dst: *mut u8, len: usize) {
+unsafe fn atomic_read_shm(src: *const u8, dst: *mut u8, len: usize) {
     debug_assert_eq!(src.align_offset(8), 0, "src must be 8-byte aligned");
     debug_assert_eq!(dst.align_offset(8), 0, "dst must be 8-byte aligned");
     debug_assert_eq!(len % 8, 0);
     let chunks = len / 8;
-    let src_u64 = src as *mut u64;
+    let src_u64 = src.cast::<u64>();
     let dst_u64 = dst as *mut u64;
     for i in 0..chunks {
         // SAFETY: `src` is 8-byte aligned, valid for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds for atomic loading.
-        let val = unsafe { AtomicU64::from_ptr(src_u64.add(i)).load(Ordering::Relaxed) };
+        let val = unsafe { load_aligned_atomic_u64(src_u64.add(i)) };
         // SAFETY: `dst` is 8-byte aligned, valid writable for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds to initialize.
         unsafe { dst_u64.add(i).write(val) };
     }
@@ -61,7 +79,7 @@ unsafe fn atomic_write_shm(src: *const u8, dst: *mut u8, len: usize) {
         // SAFETY: `src` is 8-byte aligned, valid for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds for reading.
         let val = unsafe { src_u64.add(i).read() };
         // SAFETY: `dst` is 8-byte aligned shared memory, valid for `len` bytes, and `i < chunks`, so this lane can be atomically stored.
-        unsafe { AtomicU64::from_ptr(dst_u64.add(i)).store(val, Ordering::Relaxed) };
+        unsafe { store_aligned_atomic_u64(dst_u64.add(i), val) };
     }
 }
 
@@ -127,8 +145,7 @@ pub unsafe fn write_double_buffer(base: *mut u8, archive: &TelemetryArchive) {
 /// # Safety
 /// Caller must provide a valid readable shared-memory base pointer containing
 /// a `DoubleBufferHeader` at offset 0 and two initialized `TelemetryArchive`
-/// buffers. The base pointer must be `*mut u8` (not `*const u8`) because
-/// `AtomicU64::from_ptr` requires `*mut u64`.
+/// buffers.
 #[inline]
 #[allow(clippy::result_unit_err)]
 pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()> {
@@ -153,7 +170,7 @@ pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()> 
         };
 
         // SAFETY: `offset` selects the active archive buffer inside the SHM mapping, within bounds and aligned for atomic u64 reads.
-        let src = unsafe { base.add(offset) };
+        let src = unsafe { base.add(offset) } as *const u8;
         let mut archive = MaybeUninit::<TelemetryArchive>::uninit();
 
         // Step 3: atomic copy from the active buffer
