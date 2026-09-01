@@ -32,9 +32,16 @@ impl FixedString16 {
         let slice = &self.bytes[..len];
         match std::str::from_utf8(slice) {
             Ok(s) => s,
-            Err(e) => unsafe { std::str::from_utf8_unchecked(&slice[..e.valid_up_to()]) },
+            Err(e) => std::str::from_utf8(&slice[..e.valid_up_to()]).unwrap_or(""),
         }
     }
+}
+
+/// Convert a byte slice to a `String`, stopping at the first NUL byte.
+/// Uses lossy UTF-8 conversion for any invalid sequences.
+pub fn bytes_to_string(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).to_string()
 }
 
 fn find_utf8_truncation_point(b: &[u8], max_len: usize) -> usize {
@@ -262,6 +269,7 @@ impl TelemetryArchive {
     }
 
     pub fn zeroed() -> Self {
+        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
         unsafe { std::mem::zeroed() }
     }
 }

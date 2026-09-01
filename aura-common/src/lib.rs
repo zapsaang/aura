@@ -6,9 +6,10 @@ pub mod seqlock;
 pub mod time;
 
 pub use archive::{
-    CpuCoreStat, CpuGlobalStat, DiskStat, FixedString16, GpuStat, GpuStats, MemoryStats, MetaStats,
-    MountStat, NetIfStat, NetworkStats, OsFingerprint, ProcessStat, ProcessStats, StorageStats,
-    TelemetryArchive, MAX_CORES, MAX_DISKS, MAX_MOUNTS, MAX_NETIFS, MAX_PROC_NAME_LEN, MAX_TOP_N,
+    bytes_to_string, CpuCoreStat, CpuGlobalStat, DiskStat, FixedString16, GpuStat, GpuStats,
+    MemoryStats, MetaStats, MountStat, NetIfStat, NetworkStats, OsFingerprint, ProcessStat,
+    ProcessStats, StorageStats, TelemetryArchive, MAX_CORES, MAX_DISKS, MAX_MOUNTS, MAX_NETIFS,
+    MAX_PROC_NAME_LEN, MAX_TOP_N,
 };
 pub use consts::{
     system_page_size, BUFFER_0_OFFSET, BUFFER_1_OFFSET, BUFFER_SIZE, DATA_OFFSET,

@@ -35,6 +35,7 @@ impl ShmHandle {
         #[cfg(unix)]
         {
             let fd = lock_file.as_raw_fd();
+            // SAFETY: `fd` comes from the live lock file and the flock operation has no pointer arguments; `rc` is checked.
             let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
             if rc != 0 {
                 let err = std::io::Error::last_os_error();
@@ -63,15 +64,19 @@ impl ShmHandle {
             {
                 let fd = file.as_raw_fd();
                 let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::uninit();
+                // SAFETY: `fd` is open and `stat_buf` points to writable `libc::stat` storage; the return value is checked before use.
                 if unsafe { libc::fstat(fd, stat_buf.as_mut_ptr()) } != 0 {
                     return Err(std::io::Error::last_os_error().into());
                 }
+                // SAFETY: `fstat` returned success, so `stat_buf` was fully initialized by the kernel.
                 let stat = unsafe { stat_buf.assume_init() };
 
+                // SAFETY: `geteuid` takes no pointers and has no preconditions.
                 if stat.st_uid != unsafe { libc::geteuid() } {
                     return Err(AuraError::Security(format!(
                         "SHM owned by uid {}, expected {}",
                         stat.st_uid,
+                        // SAFETY: `geteuid` takes no pointers and has no preconditions.
                         unsafe { libc::geteuid() }
                     )));
                 }
@@ -95,11 +100,13 @@ impl ShmHandle {
                     return Err(AuraError::Security("SHM is not a regular file".into()));
                 }
 
+                // SAFETY: `fd` is open for the validated SHM file and `SHM_FILE_MODE` is a valid mode value; `rc` is checked.
                 let rc = unsafe { libc::fchmod(fd, SHM_FILE_MODE as libc::mode_t) };
                 if rc != 0 {
                     return Err(std::io::Error::last_os_error().into());
                 }
 
+                // SAFETY: `fd` is open for writing and `SHM_SIZE` is the exact non-negative mapping length; `rc` is checked.
                 let rc = unsafe { libc::ftruncate(fd, SHM_SIZE as libc::off_t) };
                 if rc != 0 {
                     return Err(std::io::Error::last_os_error().into());
@@ -109,6 +116,7 @@ impl ShmHandle {
             #[cfg(not(unix))]
             file.set_len(SHM_SIZE as u64)?;
 
+            // SAFETY: the file was validated and truncated to exactly `SHM_SIZE`, matching the writable mapping length.
             let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
             return Ok(Self {
                 mmap,
@@ -155,11 +163,13 @@ impl ShmHandle {
         #[cfg(unix)]
         {
             let fd = file.as_raw_fd();
+            // SAFETY: `fd` is the newly-created SHM file and `SHM_FILE_MODE` is a valid mode value; `rc` is checked.
             let rc = unsafe { libc::fchmod(fd, SHM_FILE_MODE as libc::mode_t) };
             if rc != 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
 
+            // SAFETY: `fd` is the newly-created writable SHM file and `SHM_SIZE` is the exact non-negative mapping length; `rc` is checked.
             let rc = unsafe { libc::ftruncate(fd, SHM_SIZE as libc::off_t) };
             if rc != 0 {
                 return Err(std::io::Error::last_os_error().into());
@@ -171,6 +181,7 @@ impl ShmHandle {
 
         std::fs::rename(&tmp_path, path)?;
 
+        // SAFETY: the newly-created file was truncated to exactly `SHM_SIZE`, matching the writable mapping length.
         let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
 
         Ok(Self {
@@ -182,6 +193,7 @@ impl ShmHandle {
     pub fn write(&mut self, telemetry: &mut TelemetryArchive) -> AuraResult<()> {
         telemetry.checksum = 0;
         telemetry.checksum = telemetry.calculate_checksum();
+        // SAFETY: `self.mmap` is a writable `SHM_SIZE` mapping with the expected header and archive buffers; `telemetry` is initialized.
         unsafe {
             write_double_buffer(self.mmap.as_mut_ptr(), telemetry);
         }

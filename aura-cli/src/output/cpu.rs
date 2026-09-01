@@ -55,6 +55,7 @@ mod tests {
 
     #[test]
     fn render_cpu_contains_usage_and_core_lines() {
+        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
         let mut telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
         telemetry.cpu = CpuGlobalStat {
             user_ticks: 0,

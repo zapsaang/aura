@@ -1,0 +1,43 @@
+name: Setup Rust
+description: Install Linux CI packages, Rust toolchain, and Cargo cache.
+
+inputs:
+  components:
+    description: Rust toolchain components to install.
+    required: false
+    default: ''
+  extra-apt-packages:
+    description: Additional Linux packages to install with the shared CI packages.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Init env
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+        EXTRA_APT_PACKAGES: ${{ inputs.extra-apt-packages }}
+      run: |
+        echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+          | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+        echo 'DPkg::TriggersPending "false";' \
+          | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+
+        sudo -E apt-get -qq update
+
+        sudo -E apt-get install -y --no-install-recommends \
+          build-essential \
+          libssl-dev \
+          pkg-config \
+          ${EXTRA_APT_PACKAGES}
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2

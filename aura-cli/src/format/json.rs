@@ -1,4 +1,4 @@
-use aura_common::{AuraError, AuraResult, TelemetryArchive};
+use aura_common::{bytes_to_string, AuraError, AuraResult, TelemetryArchive};
 use serde::Serialize;
 
 use crate::Module;
@@ -240,13 +240,13 @@ fn meta_to_json(telemetry: &TelemetryArchive) -> MetaStatsJson {
         load_avg_1m: meta.load_avg_1m,
         load_avg_5m: meta.load_avg_5m,
         load_avg_15m: meta.load_avg_15m,
-        timezone_name: trim_zero_terminated(&meta.timezone_name),
+        timezone_name: bytes_to_string(&meta.timezone_name),
         timezone_offset_secs: meta.timezone_offset_secs,
         os: OsFingerprintJson {
             os_type: meta.os.os_type.as_str().to_string(),
             os_id: meta.os.os_id.as_str().to_string(),
             os_version_id: meta.os.os_version_id.as_str().to_string(),
-            os_pretty_name: trim_zero_terminated(&meta.os.os_pretty_name),
+            os_pretty_name: bytes_to_string(&meta.os.os_pretty_name),
         },
     }
 }
@@ -270,9 +270,4 @@ fn gpu_to_json(telemetry: &TelemetryArchive) -> GpuStatsJson {
             })
             .collect(),
     }
-}
-
-fn trim_zero_terminated(bytes: &[u8]) -> String {
-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    String::from_utf8_lossy(&bytes[..end]).to_string()
 }

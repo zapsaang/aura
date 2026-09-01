@@ -45,6 +45,7 @@ pub fn boot_time() -> AuraResult<u64> {
     let mut boot_time_val = MaybeUninit::<libc::timeval>::uninit();
     let mut size = std::mem::size_of::<libc::timeval>();
 
+    // SAFETY: `mib` names `kern.boottime`, `boot_time_val` is valid writable timeval storage, and `size` matches that type.
     let ret = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -62,7 +63,9 @@ pub fn boot_time() -> AuraResult<u64> {
         ));
     }
 
+    // SAFETY: `sysctl` returned success, so `boot_time_val` was initialized by the kernel.
     let bt = unsafe { boot_time_val.assume_init() };
+    // SAFETY: `time` permits a null output pointer when only the return value is needed.
     let now = unsafe { libc::time(std::ptr::null_mut()) };
 
     let uptime = now.saturating_sub(bt.tv_sec as i64) as u64;
@@ -94,6 +97,18 @@ const PROC_PIDTASKINFO: libc::c_int = 4;
 #[cfg(target_os = "macos")]
 const PROC_PIDTBSDINFO: libc::c_int = 3;
 
+// vm_statistics64 field indices (from <mach/vm_statistics.h>)
+#[cfg(target_os = "macos")]
+const VM_STAT_FREE_COUNT: usize = 0;
+#[cfg(target_os = "macos")]
+const VM_STAT_ACTIVE_COUNT: usize = 1;
+#[cfg(target_os = "macos")]
+const VM_STAT_INACTIVE_COUNT: usize = 2;
+#[cfg(target_os = "macos")]
+const VM_STAT_WIRE_COUNT: usize = 6;
+#[cfg(target_os = "macos")]
+const VM_STAT_FAULTS: usize = 7;
+
 #[cfg(target_os = "macos")]
 const SIDL: u32 = 1;
 #[cfg(target_os = "macos")]
@@ -104,6 +119,7 @@ const SSLEEP: u32 = 3;
 const SSTOP: u32 = 4;
 
 #[cfg(target_os = "macos")]
+// SAFETY: these declarations mirror Darwin/Mach C APIs; each call site documents its pointer and length invariants.
 unsafe extern "C" {
     fn mach_host_self() -> MachPort;
     fn mach_task_self() -> MachPort;
@@ -261,6 +277,7 @@ impl MacosPlatform {
     pub fn new() -> AuraResult<Self> {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: `mach_host_self` takes no arguments and returns the current task's host send right.
             let host_port = unsafe { mach_host_self() };
             return Ok(Self {
                 host_port,
@@ -289,8 +306,10 @@ impl PlatformStatsProvider for MacosPlatform {
             let mut processor_count: libc::c_uint = 0;
             let mut cpu_info: ProcessorInfoArray = std::ptr::null_mut();
             let mut cpu_info_count: MachMsgTypeNumber = 0;
+            // SAFETY: `mach_absolute_time` takes no arguments and returns a monotonic tick count.
             let now_timestamp_ns = mach_absolute_to_ns(unsafe { mach_absolute_time() });
 
+            // SAFETY: output pointers are valid for processor count/info/count, and `self.host_port` came from `mach_host_self`.
             let ret = unsafe {
                 host_processor_info(
                     self.host_port,
@@ -316,6 +335,7 @@ impl PlatformStatsProvider for MacosPlatform {
 
             if !cpu_info.is_null() {
                 let len = cpu_info_count as usize;
+                // SAFETY: `host_processor_info` returned a non-null allocation containing `cpu_info_count` c_int values.
                 let values = unsafe { std::slice::from_raw_parts(cpu_info, len) };
                 let mut idx = 0usize;
                 let mut core_idx = 0usize;
@@ -354,6 +374,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 }
                 core_count = core_idx as u8;
 
+                // SAFETY: `cpu_info` and byte size are exactly the allocation returned by `host_processor_info`.
                 let _ = unsafe {
                     vm_deallocate(
                         mach_task_self(),
@@ -427,6 +448,7 @@ impl PlatformStatsProvider for MacosPlatform {
         {
             let mut stats_buf = [0i32; 128];
             let mut count = stats_buf.len() as MachMsgTypeNumber;
+            // SAFETY: `stats_buf` is writable for `count` integer lanes and `self.host_port` is a valid host port.
             let ret = unsafe {
                 host_statistics64(
                     self.host_port,
@@ -443,14 +465,26 @@ impl PlatformStatsProvider for MacosPlatform {
             }
 
             let page_size = system_page_size() as u64;
-            let free =
-                (stats_buf.get(0).copied().unwrap_or_default() as u64).saturating_mul(page_size);
-            let active =
-                (stats_buf.get(1).copied().unwrap_or_default() as u64).saturating_mul(page_size);
-            let inactive =
-                (stats_buf.get(2).copied().unwrap_or_default() as u64).saturating_mul(page_size);
-            let wired =
-                (stats_buf.get(6).copied().unwrap_or_default() as u64).saturating_mul(page_size);
+            let free = (stats_buf
+                .get(VM_STAT_FREE_COUNT)
+                .copied()
+                .unwrap_or_default() as u64)
+                .saturating_mul(page_size);
+            let active = (stats_buf
+                .get(VM_STAT_ACTIVE_COUNT)
+                .copied()
+                .unwrap_or_default() as u64)
+                .saturating_mul(page_size);
+            let inactive = (stats_buf
+                .get(VM_STAT_INACTIVE_COUNT)
+                .copied()
+                .unwrap_or_default() as u64)
+                .saturating_mul(page_size);
+            let wired = (stats_buf
+                .get(VM_STAT_WIRE_COUNT)
+                .copied()
+                .unwrap_or_default() as u64)
+                .saturating_mul(page_size);
 
             let total = free
                 .saturating_add(active)
@@ -466,7 +500,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 swap_total: 0,
                 swap_free: 0,
                 swap_used: 0,
-                page_faults: (stats_buf.get(7).copied().unwrap_or_default() as u64),
+                page_faults: (stats_buf.get(VM_STAT_FAULTS).copied().unwrap_or_default() as u64),
                 page_faults_per_sec: 0.0,
                 _pad0: [0; 4],
             });
@@ -494,6 +528,7 @@ impl PlatformStatsProvider for MacosPlatform {
 
             let pid_cap = 4096usize;
             let mut pids = vec![0u32; pid_cap];
+            // SAFETY: `pids` is writable for `pid_cap * size_of::<u32>()` bytes, matching the supplied buffer size.
             let listed = unsafe {
                 proc_listallpids(
                     pids.as_mut_ptr() as *mut libc::c_void,
@@ -524,6 +559,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 }
 
                 let mut taskinfo = ProcTaskInfo::default();
+                // SAFETY: `taskinfo` is writable storage and `taskinfo_size` exactly matches `ProcTaskInfo`; return size is checked.
                 let task_ret = unsafe {
                     proc_pidinfo(
                         *pid as libc::c_int,
@@ -538,6 +574,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 }
 
                 let mut bsdinfo = ProcBsdInfo::default();
+                // SAFETY: `bsdinfo` is writable storage and `bsdinfo_size` exactly matches `ProcBsdInfo`; return size is checked.
                 let bsd_ret = unsafe {
                     proc_pidinfo(
                         *pid as libc::c_int,
@@ -569,6 +606,7 @@ impl PlatformStatsProvider for MacosPlatform {
                 let delta_ticks = proc_ticks.saturating_sub(prev_ticks);
 
                 let mut name_buf = [0u8; 64];
+                // SAFETY: `name_buf` is writable for its full length and the returned byte count is validated before slicing.
                 let name_len = unsafe {
                     proc_name(
                         *pid as libc::c_int,
@@ -633,6 +671,7 @@ impl PlatformStatsProvider for MacosPlatform {
 
 #[cfg(target_os = "macos")]
 fn c_char_bytes(buf: &[libc::c_char]) -> &[u8] {
+    // SAFETY: `u8` has alignment 1 and the byte slice covers the same initialized `c_char` buffer length.
     let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
     let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     &bytes[..len]
@@ -644,6 +683,7 @@ fn mach_timebase_ratio() -> (u64, u64) {
 
     *TIMEBASE.get_or_init(|| {
         let mut info = libc::mach_timebase_info_data_t { numer: 0, denom: 0 };
+        // SAFETY: `info` is valid writable storage for `mach_timebase_info_data_t`; return and denominator are checked.
         let ret = unsafe { mach_timebase_info(&mut info) };
         if ret == KERN_SUCCESS && info.numer > 0 && info.denom > 0 {
             (u64::from(info.numer), u64::from(info.denom))

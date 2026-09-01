@@ -26,6 +26,7 @@ impl TelemetryReader {
             }
         })?;
 
+        // SAFETY: the SHM file is expected to be exactly `SHM_SIZE`; the read-only mapping length matches that layout.
         let mmap = unsafe {
             MmapOptions::new()
                 .len(SHM_SIZE)
@@ -40,6 +41,7 @@ impl TelemetryReader {
     }
 
     fn read(&self) -> AuraResult<TelemetryArchive> {
+        // SAFETY: `self.mmap` covers the full SHM layout and `read_double_buffer` only performs atomic reads from it.
         unsafe {
             read_double_buffer(self.mmap.as_ptr() as *mut u8)
                 .map_err(|()| AuraError::SeqLockInvalid)
@@ -67,6 +69,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
         .write(true)
         .open(&path)
         .expect("open shm file for mmap validation");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the read-only mapping length.
     let mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -74,6 +77,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
             .expect("map shm file")
     };
 
+    // SAFETY: the mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
     let final_seq = header.seq[1].load(Ordering::Acquire);
     let active = header.active_index.load(Ordering::Acquire);
@@ -132,6 +136,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
         .write(true)
         .open(&path)
         .expect("open shm for header manipulation");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the writable mapping length.
     let mut mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -139,6 +144,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
             .expect("mmap for header manipulation")
     };
 
+    // SAFETY: the writable mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
 
     // After two writes: active=0, seq[0]=2, seq[1]=2
@@ -180,6 +186,7 @@ fn reader_blocked_by_writer_on_same_buffer() {
         .write(true)
         .open(&path)
         .expect("open shm for same-buffer test");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the writable mapping length.
     let mut mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -187,6 +194,7 @@ fn reader_blocked_by_writer_on_same_buffer() {
             .expect("mmap for same-buffer test")
     };
 
+    // SAFETY: the writable mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
 
     // After first write: active=1, seq[1]=2
@@ -219,6 +227,7 @@ fn double_buffer_writer_advances_header_state() {
         .read(true)
         .open(&path)
         .expect("open shm file for header validation");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the read-only mapping length.
     let mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -226,6 +235,7 @@ fn double_buffer_writer_advances_header_state() {
             .expect("map shm file")
     };
 
+    // SAFETY: the mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
     assert_eq!(
         header.seq[0].load(Ordering::Acquire),

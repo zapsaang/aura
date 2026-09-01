@@ -83,16 +83,20 @@ pub fn collect(
     vmstat.read_to_end(vmstat_buf)?;
     stats.page_faults = parse_vmstat_page_faults(&vmstat_buf[..]);
 
-    let delta_faults = stats.page_faults.saturating_sub(*prev_page_faults);
-    stats.page_faults_per_sec = if delta_secs > 0.0 {
-        (delta_faults as f64 / delta_secs) as f32
-    } else {
-        0.0
-    };
+    stats.page_faults_per_sec =
+        calculate_page_fault_rate(stats.page_faults, *prev_page_faults, delta_secs);
 
     *prev_page_faults = stats.page_faults;
     *out = stats;
     Ok(())
+}
+
+fn calculate_page_fault_rate(current: u64, previous: u64, delta_secs: f64) -> f32 {
+    if delta_secs > 0.0 {
+        (current.saturating_sub(previous) as f64 / delta_secs) as f32
+    } else {
+        0.0
+    }
 }
 
 fn parse_first_u64(b: &[u8]) -> u64 {
@@ -111,7 +115,7 @@ fn parse_first_u64(b: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_meminfo, parse_vmstat_page_faults};
+    use super::{calculate_page_fault_rate, parse_meminfo, parse_vmstat_page_faults};
 
     #[test]
     fn parse_meminfo_sample() {
@@ -127,5 +131,14 @@ mod tests {
         let fixture = include_bytes!("../../../tests/fixtures/proc_vmstat_sample.txt");
         let faults = parse_vmstat_page_faults(fixture);
         assert_eq!(faults, 67890);
+    }
+
+    #[test]
+    fn calculate_page_fault_rate_from_parsed_sample() {
+        let fixture = include_bytes!("../../../tests/fixtures/proc_vmstat_sample.txt");
+        let faults = parse_vmstat_page_faults(fixture);
+        let rate = calculate_page_fault_rate(faults, 1000, 1.0);
+
+        assert_eq!(rate, 66890.0);
     }
 }

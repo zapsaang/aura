@@ -144,6 +144,7 @@ fn timezone_info() -> ([u8; 8], i32) {
     let mut out = [0u8; 8];
     let mut offset = 0i32;
 
+    // SAFETY: `local_tm` is valid `tm` storage, `localtime_r` return is checked, and `tm_zone` is checked for null before `CStr`.
     unsafe {
         let now = libc::time(std::ptr::null_mut());
         let mut local_tm = std::mem::zeroed::<libc::tm>();

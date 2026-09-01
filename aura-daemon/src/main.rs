@@ -16,8 +16,11 @@ unsafe fn setup_signal_handlers() {
     extern "C" fn handler(_sig: libc::c_int) {
         SHUTDOWN_FLAG.store(true, Ordering::Relaxed);
     }
-    libc::signal(libc::SIGINT, handler as *const () as usize);
-    libc::signal(libc::SIGTERM, handler as *const () as usize);
+    // SAFETY: the handler has C ABI, accepts the required signal integer, and only stores to a static atomic flag.
+    unsafe {
+        libc::signal(libc::SIGINT, handler as *const () as usize);
+        libc::signal(libc::SIGTERM, handler as *const () as usize);
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -69,6 +72,7 @@ fn main() {
         .format_timestamp_millis()
         .init();
 
+    // SAFETY: called once during startup to install fixed SIGINT/SIGTERM handlers before the daemon loop begins.
     unsafe {
         setup_signal_handlers();
     }

@@ -228,6 +228,7 @@ fn open_read_map(path: &std::path::Path) -> Mmap {
         .read(true)
         .open(path)
         .expect("open shm for reader");
+    // SAFETY: `ShmHandle` created the file at `SHM_SIZE`, and the stress test never truncates it while readers map it.
     unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -244,6 +245,7 @@ fn read_snapshot_once(
     let start = Instant::now();
 
     loop {
+        // SAFETY: `mmap` covers the full SHM layout and the writer uses the same atomic double-buffer protocol.
         let mut snapshot = match unsafe { read_double_buffer(mmap.as_ptr() as *mut u8) } {
             Ok(snapshot) => snapshot,
             Err(()) => {

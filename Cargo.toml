@@ -20,7 +20,6 @@ memmap2 = "0.9"
 
 # Atomic operations
 crossbeam-epoch = "0.9"
-ahash = "0.7"
 
 # Error handling
 thiserror = "1.0"

@@ -35,6 +35,7 @@ impl TelemetryReader {
             )));
         }
 
+        // SAFETY: metadata verified the file is exactly `SHM_SIZE`; the read-only mapping length matches the SHM layout.
         let mmap = unsafe {
             MmapOptions::new()
                 .len(SHM_SIZE)
@@ -48,6 +49,7 @@ impl TelemetryReader {
     }
 
     pub fn read(&self) -> AuraResult<TelemetryArchive> {
+        // SAFETY: `self.mmap` covers the full SHM layout and `read_double_buffer` only performs atomic reads from it.
         let mut snapshot = unsafe {
             read_double_buffer(self.mmap.as_ptr() as *mut u8)
                 .map_err(|()| AuraError::SeqLockInvalid)?
@@ -128,6 +130,7 @@ mod tests {
         write_snapshot(&mut mmap, &sample_telemetry(10.0));
 
         let base = mmap.as_mut_ptr();
+        // SAFETY: `base` is from a writable `SHM_SIZE` mapping whose first bytes are an aligned `DoubleBufferHeader`.
         let header = unsafe { &*(base as *const DoubleBufferHeader) };
         let active_offset = if header
             .active_index
@@ -138,6 +141,7 @@ mod tests {
         } else {
             BUFFER_1_OFFSET
         };
+        // SAFETY: `active_offset` selects an in-bounds archive buffer and the checksum field offset is aligned for `u32`.
         unsafe {
             let checksum_ptr = base
                 .add(active_offset + std::mem::offset_of!(TelemetryArchive, checksum))
@@ -184,12 +188,14 @@ mod tests {
             .open(path)
             .unwrap();
         file.set_len(SHM_SIZE as u64).unwrap();
+        // SAFETY: the temp file was just sized to `SHM_SIZE`, matching the writable mapping length.
         unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() }
     }
 
     fn write_snapshot(mmap: &mut memmap2::MmapMut, telemetry: &TelemetryArchive) {
         let mut t = *telemetry;
         t.checksum = t.calculate_checksum();
+        // SAFETY: `mmap` is a writable full-size test SHM mapping and `t` is a fully initialized snapshot.
         unsafe {
             write_double_buffer(mmap.as_mut_ptr(), &t);
         }
@@ -201,6 +207,7 @@ mod tests {
     }
 
     fn sample_telemetry(cpu_usage: f32) -> TelemetryArchive {
+        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
         let mut t = unsafe { std::mem::zeroed::<TelemetryArchive>() };
         t.version = 1;
         t.cpu = CpuGlobalStat {
@@ -256,10 +263,18 @@ mod tests {
             _pad0: [0; 4],
         };
         t.storage = StorageStats {
-            disks: [unsafe { std::mem::zeroed() }; MAX_DISKS],
+            disks: [
+                // SAFETY: `DiskStat` derives `bytemuck::Zeroable`, so an all-zero disk entry is valid.
+                unsafe { std::mem::zeroed() };
+                MAX_DISKS
+            ],
             disk_count: 0,
             _pad0: [0; 7],
-            mounts: [unsafe { std::mem::zeroed() }; MAX_MOUNTS],
+            mounts: [
+                // SAFETY: `MountStat` derives `bytemuck::Zeroable`, so an all-zero mount entry is valid.
+                unsafe { std::mem::zeroed() };
+                MAX_MOUNTS
+            ],
             mount_count: 0,
             _pad1: [0; 6],
         };

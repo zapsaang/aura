@@ -1,8 +1,8 @@
-use aura_common::TelemetryArchive;
+use aura_common::{bytes_to_string, TelemetryArchive};
 
 use crate::ColorMode;
 
-use super::{ansi, trim_zero_terminated};
+use super::ansi;
 
 pub fn os_logo(os_id: &str, os_type: &str) -> &'static str {
     if os_type == "darwin" {
@@ -41,10 +41,10 @@ pub fn os_logo(os_id: &str, os_type: &str) -> &'static str {
 
 pub fn render(color: ColorMode, telemetry: &TelemetryArchive) -> String {
     let meta = &telemetry.meta;
-    let tz = trim_zero_terminated(&meta.timezone_name);
+    let tz = bytes_to_string(&meta.timezone_name);
     let os_type = meta.os.os_type.as_str();
     let os_id = meta.os.os_id.as_str();
-    let pretty = trim_zero_terminated(&meta.os.os_pretty_name);
+    let pretty = bytes_to_string(&meta.os.os_pretty_name);
 
     let mut out = String::new();
     out.push_str(&ansi::style(color, ansi::BOLD, "=== META ==="));

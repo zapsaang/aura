@@ -46,11 +46,6 @@ fn render_all(color: ColorMode, telemetry: &TelemetryArchive) -> String {
     .join("\n")
 }
 
-pub(crate) fn trim_zero_terminated(bytes: &[u8]) -> String {
-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    String::from_utf8_lossy(&bytes[..end]).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use aura_common::TelemetryArchive;
@@ -61,6 +56,7 @@ mod tests {
 
     #[test]
     fn routing_renders_cpu_module() {
+        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
         let telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
         let out = render(Module::Cpu, ColorMode::None, &telemetry);
         assert!(out.contains("CPU"));

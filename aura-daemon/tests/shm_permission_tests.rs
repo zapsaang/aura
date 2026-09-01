@@ -22,8 +22,10 @@ fn shm_created_with_world_readable_permissions() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("aura_test_perms.dat");
 
+    // SAFETY: `umask` accepts any mode bits; this serial test restores the previous process mask immediately after creation.
     let old = unsafe { libc::umask(0o077) };
     let handle = ShmHandle::new(&path);
+    // SAFETY: `old` was returned by `umask`, so restoring it is valid.
     unsafe { libc::umask(old) };
 
     handle.unwrap();
@@ -95,8 +97,10 @@ fn shm_permissions_survive_umask_077() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("aura_umask_077.dat");
 
+    // SAFETY: `umask` accepts any mode bits; this serial test restores the previous process mask immediately after creation.
     let old = unsafe { libc::umask(0o077) };
     let _handle = ShmHandle::new(&path).unwrap();
+    // SAFETY: `old` was returned by `umask`, so restoring it is valid.
     unsafe { libc::umask(old) };
 
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
@@ -105,4 +109,28 @@ fn shm_permissions_survive_umask_077() {
         "SHM must be 0o666 even with umask 0o077, got {:#o}",
         mode
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[serial]
+fn shm_rejects_symlink_attack() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("real_file.dat");
+    let link = dir.path().join("aura_symlink.dat");
+
+    std::fs::write(&target, vec![0u8; SHM_SIZE]).unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    match ShmHandle::new(&link) {
+        Ok(_) => panic!("Should reject symlink"),
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("symlink"),
+                "Error should mention symlink, got: {}",
+                msg
+            );
+        }
+    }
 }

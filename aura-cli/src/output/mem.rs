@@ -65,6 +65,7 @@ mod tests {
 
     #[test]
     fn render_mem_contains_percent_and_totals() {
+        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
         let mut telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
         telemetry.memory = MemoryStats {
             ram_total: 100,
@@ -88,6 +89,7 @@ mod tests {
 
     #[test]
     fn render_swap_contains_swap_percent() {
+        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
         let mut telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
         telemetry.memory = MemoryStats {
             ram_total: 0,

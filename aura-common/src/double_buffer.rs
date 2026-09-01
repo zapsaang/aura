@@ -27,13 +27,17 @@ const _: () = assert!(
 /// - `src` must not be modified by non-atomic operations while this runs
 #[inline]
 unsafe fn atomic_read_shm(src: *mut u8, dst: *mut u8, len: usize) {
+    debug_assert_eq!(src.align_offset(8), 0, "src must be 8-byte aligned");
+    debug_assert_eq!(dst.align_offset(8), 0, "dst must be 8-byte aligned");
     debug_assert_eq!(len % 8, 0);
     let chunks = len / 8;
     let src_u64 = src as *mut u64;
     let dst_u64 = dst as *mut u64;
     for i in 0..chunks {
-        let val = AtomicU64::from_ptr(src_u64.add(i)).load(Ordering::Relaxed);
-        dst_u64.add(i).write(val);
+        // SAFETY: `src` is 8-byte aligned, valid for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds for atomic loading.
+        let val = unsafe { AtomicU64::from_ptr(src_u64.add(i)).load(Ordering::Relaxed) };
+        // SAFETY: `dst` is 8-byte aligned, valid writable for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds to initialize.
+        unsafe { dst_u64.add(i).write(val) };
     }
 }
 
@@ -47,13 +51,17 @@ unsafe fn atomic_read_shm(src: *mut u8, dst: *mut u8, len: usize) {
 /// - `dst` must not be accessed by non-atomic operations while this runs
 #[inline]
 unsafe fn atomic_write_shm(src: *const u8, dst: *mut u8, len: usize) {
+    debug_assert_eq!(src.align_offset(8), 0, "src must be 8-byte aligned");
+    debug_assert_eq!(dst.align_offset(8), 0, "dst must be 8-byte aligned");
     debug_assert_eq!(len % 8, 0);
     let chunks = len / 8;
     let src_u64 = src as *const u64;
     let dst_u64 = dst as *mut u64;
     for i in 0..chunks {
-        let val = src_u64.add(i).read();
-        AtomicU64::from_ptr(dst_u64.add(i)).store(val, Ordering::Relaxed);
+        // SAFETY: `src` is 8-byte aligned, valid for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds for reading.
+        let val = unsafe { src_u64.add(i).read() };
+        // SAFETY: `dst` is 8-byte aligned shared memory, valid for `len` bytes, and `i < chunks`, so this lane can be atomically stored.
+        unsafe { AtomicU64::from_ptr(dst_u64.add(i)).store(val, Ordering::Relaxed) };
     }
 }
 
@@ -68,6 +76,7 @@ unsafe fn atomic_write_shm(src: *const u8, dst: *mut u8, len: usize) {
 /// a `DoubleBufferHeader` at offset 0 and two `TelemetryArchive` buffers.
 #[inline]
 pub unsafe fn write_double_buffer(base: *mut u8, archive: &TelemetryArchive) {
+    // SAFETY: `base` points to a writable SHM mapping whose offset 0 contains an 8-byte aligned `DoubleBufferHeader`.
     let header = unsafe { &*(base as *const DoubleBufferHeader) };
 
     let active = header.active_index.load(Ordering::Relaxed) & 1;
@@ -81,10 +90,12 @@ pub unsafe fn write_double_buffer(base: *mut u8, archive: &TelemetryArchive) {
     } else {
         BUFFER_1_OFFSET
     };
+    // SAFETY: `offset` is one of the two fixed buffer offsets inside the SHM mapping, both within `SHM_SIZE` and 8-byte aligned.
     let dst = unsafe { base.add(offset) };
 
     // Atomic copy: prevents UB if reader is slow; Relaxed is sufficient since
     // seq fences provide ordering and individual u64 ops are hardware-atomic.
+    // SAFETY: `archive` is initialized and 8-byte aligned; `dst` points to a full archive buffer and `ARCHIVE_SIZE` is a multiple of 8.
     unsafe {
         atomic_write_shm(
             archive as *const TelemetryArchive as *const u8,
@@ -121,6 +132,7 @@ pub unsafe fn write_double_buffer(base: *mut u8, archive: &TelemetryArchive) {
 #[inline]
 #[allow(clippy::result_unit_err)]
 pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()> {
+    // SAFETY: `base` points to a readable SHM mapping whose offset 0 contains an 8-byte aligned `DoubleBufferHeader`.
     let header = unsafe { &*(base as *const DoubleBufferHeader) };
 
     for _ in 0..3 {
@@ -140,10 +152,12 @@ pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()> 
             BUFFER_1_OFFSET
         };
 
+        // SAFETY: `offset` selects the active archive buffer inside the SHM mapping, within bounds and aligned for atomic u64 reads.
         let src = unsafe { base.add(offset) };
         let mut archive = MaybeUninit::<TelemetryArchive>::uninit();
 
         // Step 3: atomic copy from the active buffer
+        // SAFETY: `src` points to a full archive buffer; `archive` is writable uninit storage and `ARCHIVE_SIZE` is a multiple of 8.
         unsafe {
             atomic_read_shm(src, archive.as_mut_ptr() as *mut u8, ARCHIVE_SIZE);
         }
@@ -153,9 +167,125 @@ pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()> 
         let seq2 = header.seq[active as usize].load(Ordering::Acquire);
 
         if seq1 == seq2 {
+            // SAFETY: `atomic_read_shm` initialized exactly `ARCHIVE_SIZE` bytes, which is the complete `TelemetryArchive`.
             return Ok(unsafe { archive.assume_init() });
         }
     }
 
     Err(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{TelemetryArchive, SHM_SIZE};
+
+    fn aligned_shm_buffer() -> (Vec<u64>, *mut u8) {
+        let mut buf = vec![0u64; SHM_SIZE / 8];
+        let ptr = buf.as_mut_ptr() as *mut u8;
+        assert_eq!(ptr.align_offset(8), 0, "Vec<u64> must be 8-byte aligned");
+        assert_eq!(buf.len() * 8, SHM_SIZE, "Buffer must cover full SHM size");
+        (buf, ptr)
+    }
+
+    #[test]
+    fn write_then_read_returns_same_data() {
+        let (_buf, base) = aligned_shm_buffer();
+
+        let mut archive = TelemetryArchive::zeroed();
+        archive.version = 42;
+        archive.cpu.user_ticks = 1234;
+        archive.memory.ram_total = 16_777_216;
+
+        // SAFETY: `base` comes from `aligned_shm_buffer`, a zeroed `Vec<u64>` covering `SHM_SIZE` with 8-byte alignment.
+        unsafe {
+            write_double_buffer(base, &archive);
+        }
+
+        // SAFETY: `base` still points to the same aligned, initialized test SHM buffer after the clean write.
+        let result = unsafe { read_double_buffer(base) };
+        let read_back = result.expect("read should succeed after a clean write");
+
+        assert_eq!(read_back.version, 42);
+        assert_eq!(read_back.cpu.user_ticks, 1234);
+        assert_eq!(read_back.memory.ram_total, 16_777_216);
+    }
+
+    #[test]
+    fn read_returns_err_when_seq_is_odd() {
+        let (_buf, base) = aligned_shm_buffer();
+
+        // SAFETY: `base` is an 8-byte aligned test SHM buffer whose first bytes are the zeroed header.
+        let header = unsafe { &*(base as *const DoubleBufferHeader) };
+        header.active_index.store(0, Ordering::Relaxed);
+        header.seq[0].store(1, Ordering::Relaxed);
+
+        // SAFETY: `base` is a valid aligned test SHM buffer; the intentionally odd seq exercises the error path.
+        let result = unsafe { read_double_buffer(base) };
+        assert!(result.is_err(), "read should fail when seq[active] is odd");
+    }
+
+    #[test]
+    fn write_flips_active_index() {
+        let (_buf, base) = aligned_shm_buffer();
+
+        // SAFETY: `base` is an 8-byte aligned test SHM buffer whose first bytes are the zeroed header.
+        let header = unsafe { &*(base as *const DoubleBufferHeader) };
+        assert_eq!(
+            header.active_index.load(Ordering::Relaxed),
+            0,
+            "initial active_index should be 0 (zeroed memory)"
+        );
+
+        let archive = TelemetryArchive::zeroed();
+        // SAFETY: `base` is a valid aligned test SHM buffer covering the full double-buffer layout.
+        unsafe {
+            write_double_buffer(base, &archive);
+        }
+
+        assert_eq!(
+            header.active_index.load(Ordering::Relaxed),
+            1,
+            "active_index should flip to 1 after first write"
+        );
+    }
+
+    #[test]
+    fn multiple_writes_increment_seq_by_2() {
+        let (_buf, base) = aligned_shm_buffer();
+
+        // SAFETY: `base` is an 8-byte aligned test SHM buffer whose first bytes are the zeroed header.
+        let header = unsafe { &*(base as *const DoubleBufferHeader) };
+        let archive = TelemetryArchive::zeroed();
+
+        // SAFETY: `base` is a valid aligned test SHM buffer covering the full double-buffer layout.
+        unsafe {
+            write_double_buffer(base, &archive);
+        }
+        let seq_after_1 = header.seq[1].load(Ordering::Relaxed);
+        assert_eq!(
+            seq_after_1, 2,
+            "seq[inactive] should be 2 after first write (0→1→2)"
+        );
+
+        // SAFETY: `base` remains valid for the second write into the alternate archive buffer.
+        unsafe {
+            write_double_buffer(base, &archive);
+        }
+        let seq_after_2 = header.seq[0].load(Ordering::Relaxed);
+        assert_eq!(
+            seq_after_2, 2,
+            "seq[inactive=0] should be 2 after second write (0→1→2)"
+        );
+
+        // SAFETY: `base` remains valid for the third write into the original archive buffer.
+        unsafe {
+            write_double_buffer(base, &archive);
+        }
+        let seq_after_3 = header.seq[1].load(Ordering::Relaxed);
+        assert_eq!(
+            seq_after_3, 4,
+            "seq[inactive=1] should be 4 after third write (2→3→4)"
+        );
+    }
 }

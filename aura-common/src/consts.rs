@@ -41,6 +41,7 @@ pub fn system_page_size() -> usize {
     *PAGE_SIZE.get_or_init(|| {
         #[cfg(unix)]
         {
+            // SAFETY: `_SC_PAGESIZE` is a valid `sysconf` name and the call uses no pointers or shared mutable state.
             unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
         }
         #[cfg(windows)]
