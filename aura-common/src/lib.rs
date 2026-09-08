@@ -8,6 +8,8 @@ pub mod archive;
 pub mod consts;
 pub mod double_buffer;
 pub mod error;
+#[cfg(unix)]
+pub mod runtime;
 pub mod seqlock;
 pub mod time;
 

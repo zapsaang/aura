@@ -10,8 +10,8 @@ pub const BUFFER_0_OFFSET: usize = HEADER_SIZE;
 pub const BUFFER_1_OFFSET: usize = HEADER_SIZE + BUFFER_SIZE;
 pub const SHM_SIZE: usize = HEADER_SIZE + (2 * BUFFER_SIZE);
 
-/// SHM file permissions: world-readable/writable for cross-user IPC
-pub const SHM_FILE_MODE: u32 = 0o666;
+/// SHM leaf permissions: owner-only for private per-user IPC
+pub const SHM_FILE_MODE: u32 = 0o600;
 
 /// SeqLock version offset in mmap (first 8 bytes)
 pub const VERSION_OFFSET: usize = 0;

@@ -40,6 +40,11 @@ fn ipc_concurrent_reader_writer_stress() {
     const CATCHUP_TIMEOUT: Duration = Duration::from_secs(1);
 
     let temp_dir = tempfile::tempdir().expect("create temp dir");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod test temp dir");
+    }
     let shm_path = temp_dir.path().join("aura-ipc-concurrent.dat");
 
     let mut handle = ShmHandle::new(&shm_path).expect("create shm handle");

@@ -29,14 +29,20 @@ pub enum AuraError {
     #[error("Security validation failed: {0}")]
     Security(String),
 
-    #[error("Another aura-daemon instance is already running (SHM file locked)")]
-    AlreadyRunning,
-
     #[error("unsupported archive version {found} (expected 2)")]
     UnsupportedVersion { found: u64 },
 
     #[error("invalid archive: {reason}")]
     InvalidArchive { reason: String },
+
+    #[error("daemon is offline: {0}")]
+    Offline(String),
+
+    #[error("Incompatible shared memory size: expected {expected}, found {found}")]
+    IncompatibleShmSize { expected: u64, found: u64 },
+
+    #[error("fatal runtime error: {0}")]
+    Fatal(String),
 }
 
 pub type AuraResult<T> = Result<T, AuraError>;

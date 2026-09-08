@@ -1,4 +1,5 @@
 use std::fs::OpenOptions;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,10 +19,18 @@ fn temp_shm_path(tag: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!(
-        "aura-reader-contract-{tag}-{}-{nanos}.dat",
+    let dir = std::env::temp_dir().join(format!(
+        "aura-reader-contract-{tag}-{}-{nanos}",
         std::process::id()
-    ))
+    ));
+    std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+    dir.join("state.dat")
+}
+
+fn cleanup_shm(path: &Path) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 fn write_shm(path: &Path, archive: &TelemetryArchive) {
@@ -30,6 +39,7 @@ fn write_shm(path: &Path, archive: &TelemetryArchive) {
         .write(true)
         .create(true)
         .truncate(true)
+        .mode(0o600)
         .open(path)
         .unwrap();
     file.set_len(SHM_SIZE as u64).unwrap();
@@ -236,7 +246,7 @@ fn read_error(archive: &TelemetryArchive, tag: &str) -> AuraError {
     write_shm(&path, archive);
     let reader = TelemetryReader::new(&path).unwrap();
     let result = reader.read();
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
     result.expect_err("read must fail")
 }
 
@@ -254,7 +264,7 @@ fn valid_minimal_archive_reads() {
     let reader = TelemetryReader::new(&path).unwrap();
     let out = reader.read().unwrap();
     assert_eq!(out.version, ARCHIVE_VERSION);
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
 }
 
 #[test]
@@ -269,7 +279,7 @@ fn valid_maximal_archive_reads_and_validates() {
     assert_eq!(out.derived.ram_used_percent, 80.0);
     assert_eq!(out.gpu.gpus[0].temperature_celsius, 70);
     assert_eq!(out.storage.disks[0].major, 8);
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
 }
 
 #[test]
@@ -327,7 +337,7 @@ fn version_fault_precedes_crc_check() {
         Err(AuraError::UnsupportedVersion { found }) => assert_eq!(found, 1),
         other => panic!("version fault must precede CRC, got {other:?}"),
     }
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
 }
 
 #[test]
@@ -354,7 +364,7 @@ fn crc_fault_precedes_validation() {
         Err(AuraError::ChecksumMismatch { .. }) => {}
         other => panic!("CRC fault must precede validation, got {other:?}"),
     }
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
 }
 
 #[test]
@@ -417,6 +427,7 @@ fn zeroed_shm_reports_unsupported_version() {
         .write(true)
         .create(true)
         .truncate(true)
+        .mode(0o600)
         .open(&path)
         .unwrap();
     file.set_len(SHM_SIZE as u64).unwrap();
@@ -425,7 +436,7 @@ fn zeroed_shm_reports_unsupported_version() {
         Err(AuraError::UnsupportedVersion { found }) => assert_eq!(found, 0),
         other => panic!("zeroed SHM must surface version rejection, got {other:?}"),
     }
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
 }
 
 #[test]
@@ -436,12 +447,13 @@ fn wrong_shm_size_is_rejected() {
         .write(true)
         .create(true)
         .truncate(true)
+        .mode(0o600)
         .open(&path)
         .unwrap();
     file.set_len(1024).unwrap();
     let reader = TelemetryReader::new(&path);
     assert!(reader.is_err());
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
 }
 
 #[test]
@@ -488,5 +500,5 @@ fn seqlock_torn_write_is_retried_or_rejected() {
         Err(AuraError::SeqLockInvalid) => {}
         Err(other) => panic!("unexpected error {other:?}"),
     }
-    let _ = std::fs::remove_file(&path);
+    cleanup_shm(&path);
 }

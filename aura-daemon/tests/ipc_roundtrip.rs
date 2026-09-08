@@ -11,6 +11,14 @@ use aura_daemon::state::ShmHandle;
 use memmap2::{Mmap, MmapOptions};
 use tempfile::TempDir;
 
+fn trusted_temp_dir() -> TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().expect("create temp dir");
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("chmod test temp dir");
+    dir
+}
+
 struct TelemetryReader {
     mmap: Mmap,
     #[allow(dead_code)]
@@ -61,7 +69,7 @@ impl TelemetryReader {
 
 #[test]
 fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-ipc-roundtrip.dat");
 
     let mut expected = sample_archive();
@@ -127,7 +135,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
 /// actively writing to buffer 1 (false contention bug).
 #[test]
 fn reader_not_blocked_by_writer_on_other_buffer() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-false-contention.dat");
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
@@ -182,7 +190,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
 /// is actively writing to the SAME buffer the reader is reading.
 #[test]
 fn reader_blocked_by_writer_on_same_buffer() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-same-buffer-contention.dat");
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
@@ -225,7 +233,7 @@ fn reader_blocked_by_writer_on_same_buffer() {
 
 #[test]
 fn double_buffer_writer_advances_header_state() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-ipc-header-state.dat");
     let mut expected = sample_archive();
 

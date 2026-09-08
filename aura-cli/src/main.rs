@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use aura_cli::reader::TelemetryReader;
-use aura_common::{AuraError, AuraResult, OFFLINE_THRESHOLD_SECS, SHM_PATH};
+use aura_common::{AuraError, AuraResult, OFFLINE_THRESHOLD_SECS};
 use clap::{Parser, ValueEnum};
 
 #[derive(Parser, Debug)]
@@ -20,8 +20,10 @@ struct Args {
     #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
     format: OutputFormat,
 
-    #[arg(short, long, default_value = SHM_PATH)]
-    shm_path: PathBuf,
+    /// Absolute state path under an existing euid-owned 0700 directory;
+    /// defaults to the private per-user runtime location.
+    #[arg(short, long)]
+    shm_path: Option<PathBuf>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +52,10 @@ pub enum OutputFormat {
 }
 
 fn run(args: Args) -> AuraResult<String> {
-    let reader = TelemetryReader::new(&args.shm_path)?;
+    let reader = match &args.shm_path {
+        Some(path) => TelemetryReader::new(path)?,
+        None => TelemetryReader::new_default()?,
+    };
     let telemetry = reader.read()?;
 
     let threshold = Duration::from_secs_f64(OFFLINE_THRESHOLD_SECS);
@@ -76,6 +81,10 @@ fn main() {
     match run(args) {
         Ok(output) => println!("{output}"),
         Err(AuraError::StaleData { .. }) => {
+            println!("[AURA: OFFLINE]");
+            std::process::exit(1);
+        }
+        Err(AuraError::Offline(_)) => {
             println!("[AURA: OFFLINE]");
             std::process::exit(1);
         }
