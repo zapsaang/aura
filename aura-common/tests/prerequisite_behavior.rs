@@ -47,7 +47,7 @@ fn atomic_copy_roundtrip_preserves_every_archive_byte() {
 
     // SAFETY: `base` is an aligned zeroed allocation covering the full SHM
     // layout and `expected` is a fully initialized archive.
-    unsafe { write_double_buffer(base, &expected) };
+    unsafe { write_double_buffer(base, &expected) }.expect("publish archive");
     // SAFETY: the preceding write initialized the published archive buffer in
     // the same aligned full-size SHM allocation.
     let actual = unsafe { read_double_buffer(base) }.expect("published archive should be readable");
@@ -62,7 +62,7 @@ fn writer_publishes_expected_buffer_and_sequence() {
 
     // SAFETY: `base` is an aligned zeroed allocation covering the full SHM
     // layout and `archive` is fully initialized.
-    unsafe { write_double_buffer(base, &archive) };
+    unsafe { write_double_buffer(base, &archive) }.expect("publish archive");
     // SAFETY: offset zero of the aligned allocation contains the initialized
     // double-buffer header written atomically above.
     let header = unsafe { &*base.cast::<DoubleBufferHeader>() };
@@ -80,7 +80,7 @@ fn writer_places_archive_at_the_published_offset() {
 
     // SAFETY: `base` is an aligned zeroed allocation covering the full SHM
     // layout and `archive` is fully initialized.
-    unsafe { write_double_buffer(base, &archive) };
+    unsafe { write_double_buffer(base, &archive) }.expect("publish archive");
 
     let bytes = bytemuck::cast_slice::<u64, u8>(&storage);
     assert_eq!(

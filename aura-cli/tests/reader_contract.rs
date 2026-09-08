@@ -2,9 +2,9 @@ use std::fs::OpenOptions;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use aura_cli::reader::TelemetryReader;
+use aura_cli::reader::{timestamp_is_fresh, TelemetryReader};
 use aura_common::{
     validate_archive, write_double_buffer, AuraError, CpuCoreStat, CpuGlobalStat, DerivedStats,
     DiskStat, FixedString16, GpuStat, GpuStats, MemoryStats, NetIfStat, NetworkStats,
@@ -49,7 +49,7 @@ fn write_shm(path: &Path, archive: &TelemetryArchive) {
     snapshot.checksum = snapshot.calculate_checksum();
     // SAFETY: the mapping is a full writable SHM region and the snapshot is initialized.
     unsafe {
-        write_double_buffer(mmap.as_mut_ptr(), &snapshot);
+        write_double_buffer(mmap.as_mut_ptr(), &snapshot).expect("publish snapshot");
     }
     mmap.flush().unwrap();
 }
@@ -397,13 +397,13 @@ fn invalid_tone_fault_reaches_reader() {
 }
 
 #[test]
-fn zero_timestamp_fault_reaches_reader() {
+fn zero_timestamp_is_offline_at_reader_boundary() {
     let mut a = minimal_valid();
     a.meta.timestamp_ns = 0;
     let err = read_error(&a, "ts-zero");
-    expect_invalid_archive(
-        err,
-        "field meta.timestamp_ns: outside 1..=18446744073709551615",
+    assert!(
+        matches!(err, AuraError::Offline(_)),
+        "zero producer timestamp must report offline, got {err:?}"
     );
 }
 
@@ -433,10 +433,58 @@ fn zeroed_shm_reports_unsupported_version() {
     file.set_len(SHM_SIZE as u64).unwrap();
     let reader = TelemetryReader::new(&path).unwrap();
     match reader.read() {
-        Err(AuraError::UnsupportedVersion { found }) => assert_eq!(found, 0),
-        other => panic!("zeroed SHM must surface version rejection, got {other:?}"),
+        Err(AuraError::Offline(reason)) => assert_eq!(reason, "telemetry has not been published"),
+        other => panic!("zeroed SHM must surface not-published offline, got {other:?}"),
     }
     cleanup_shm(&path);
+}
+
+#[test]
+fn zero_monotonic_timestamp_is_offline() {
+    // Given
+    let threshold = Duration::from_secs(2);
+
+    // When
+    let fresh = timestamp_is_fresh(0, 10_000_000_000, threshold);
+
+    // Then
+    assert!(!fresh);
+}
+
+#[test]
+fn future_monotonic_timestamp_is_offline() {
+    // Given
+    let threshold = Duration::from_secs(2);
+
+    // When
+    let fresh = timestamp_is_fresh(10_000_000_001, 10_000_000_000, threshold);
+
+    // Then
+    assert!(!fresh);
+}
+
+#[test]
+fn stale_monotonic_timestamp_is_offline() {
+    // Given
+    let threshold = Duration::from_secs(2);
+
+    // When
+    let fresh = timestamp_is_fresh(7_999_999_999, 10_000_000_000, threshold);
+
+    // Then
+    assert!(!fresh);
+}
+
+#[test]
+fn monotonic_timestamp_at_threshold_is_fresh() {
+    // Given
+    let threshold = Duration::from_secs(2);
+
+    // When
+    let fresh = timestamp_is_fresh(8_000_000_000, 10_000_000_000, threshold);
+
+    // Then
+    assert!(fresh);
 }
 
 #[test]
@@ -495,10 +543,9 @@ fn seqlock_torn_write_is_retried_or_rejected() {
         (*seq).fetch_add(1, Ordering::SeqCst);
     }
     let reader = TelemetryReader::new(&path).unwrap();
-    match reader.read() {
-        Ok(archive) => assert_eq!(archive.version, ARCHIVE_VERSION),
-        Err(AuraError::SeqLockInvalid) => {}
-        Err(other) => panic!("unexpected error {other:?}"),
-    }
+    let archive = reader
+        .read()
+        .expect("inactive sequence does not block read");
+    assert_eq!(archive.version, ARCHIVE_VERSION);
     cleanup_shm(&path);
 }

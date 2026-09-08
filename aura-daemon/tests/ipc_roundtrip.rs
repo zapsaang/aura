@@ -60,10 +60,7 @@ impl TelemetryReader {
 
     fn read(&self) -> AuraResult<TelemetryArchive> {
         // SAFETY: `self.mmap` covers the full SHM layout and `read_double_buffer` only performs atomic reads from it.
-        unsafe {
-            read_double_buffer(self.mmap.as_ptr() as *mut u8)
-                .map_err(|()| AuraError::SeqLockInvalid)
-        }
+        unsafe { read_double_buffer(self.mmap.as_ptr()) }
     }
 }
 
@@ -266,6 +263,157 @@ fn double_buffer_writer_advances_header_state() {
         "buffer 1: 0->1->2 after first write"
     );
     assert_eq!(header.active_index.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn restart_recovers_abandoned_odd_sequence() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-restart-odd.dat");
+    let mut first = ShmHandle::new(&path).expect("create first daemon handle");
+    let mut old = sample_archive();
+    old.meta.timestamp_ns = 501;
+    first.write(&mut old).expect("seed old snapshot");
+    drop(first);
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("open state for crash injection");
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE`, and mmap supplies page-aligned writable storage.
+    let mut map = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() };
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] sequence zero is
+    // a naturally aligned `AtomicU64` inside the live map and no daemon runs.
+    unsafe {
+        (*map
+            .as_mut_ptr()
+            .add(8)
+            .cast::<std::sync::atomic::AtomicU64>())
+        .store(1, Ordering::Release)
+    };
+    drop(map);
+    drop(file);
+
+    // When
+    let mut restarted = ShmHandle::new(&path).expect("restart daemon handle");
+    let mut new = sample_archive();
+    new.meta.timestamp_ns = 502;
+    restarted.write(&mut new).expect("recover and publish");
+
+    // Then
+    let reader = TelemetryReader::new(&path).expect("open reader");
+    assert_eq!(reader.read().unwrap().meta.timestamp_ns, 502);
+    let file = OpenOptions::new().read(true).open(&path).unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the validated state
+    // file remains exactly `SHM_SIZE` and is mapped read-only at page alignment.
+    let map = unsafe { MmapOptions::new().len(SHM_SIZE).map(&file).unwrap() };
+    // SAFETY: [Categories 5, 6, 10 — validity, alignment, bounds] the mapped
+    // header contains initialized atomics at offset zero.
+    let header = unsafe { &*map.as_ptr().cast::<DoubleBufferHeader>() };
+    assert_eq!(header.seq[0].load(Ordering::Acquire), 4);
+    assert_eq!(header.active_index.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn restart_preserves_existing_even_generations() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-restart-even.dat");
+    let mut first = ShmHandle::new(&path).expect("create first daemon handle");
+    let mut snapshot = sample_archive();
+    first.write(&mut snapshot).expect("publish buffer one");
+    first.write(&mut snapshot).expect("publish buffer zero");
+    drop(first);
+
+    // When
+    let mut restarted = ShmHandle::new(&path).expect("restart daemon handle");
+    restarted
+        .write(&mut snapshot)
+        .expect("publish after restart");
+
+    // Then
+    let file = OpenOptions::new().read(true).open(&path).unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the validated state
+    // file remains exactly `SHM_SIZE` and maps at page alignment.
+    let map = unsafe { MmapOptions::new().len(SHM_SIZE).map(&file).unwrap() };
+    // SAFETY: [Categories 5, 6, 10 — validity, alignment, bounds] the header is
+    // initialized and naturally aligned at the start of the mapping.
+    let header = unsafe { &*map.as_ptr().cast::<DoubleBufferHeader>() };
+    assert_eq!(header.seq[0].load(Ordering::Acquire), 2);
+    assert_eq!(header.seq[1].load(Ordering::Acquire), 4);
+    assert_eq!(header.active_index.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn corrupt_active_header_rejects_write_without_state_mutation() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-corrupt-active.dat");
+    let mut daemon = ShmHandle::new(&path).expect("create daemon handle");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE`, and mmap supplies page-aligned writable storage.
+    let mut map = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() };
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] active index is
+    // a naturally aligned atomic in the live map and no other writer exists.
+    unsafe {
+        (*map.as_mut_ptr().cast::<std::sync::atomic::AtomicU64>()).store(2, Ordering::Release)
+    };
+    let before = map[..].to_vec();
+    let mut snapshot = sample_archive();
+
+    // When
+    let error = daemon
+        .write(&mut snapshot)
+        .expect_err("corrupt active header must reject");
+
+    // Then
+    assert!(matches!(error, AuraError::InvalidShmHeader { found: 2 }));
+    assert_eq!(&map[..], before.as_slice());
+}
+
+#[test]
+fn exhausted_sequence_rejects_write_without_state_mutation() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-exhausted-sequence.dat");
+    let mut daemon = ShmHandle::new(&path).expect("create daemon handle");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE`, and mmap supplies page-aligned writable storage.
+    let mut map = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() };
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] sequence one is
+    // a naturally aligned atomic in the live map and no other writer exists.
+    unsafe {
+        (*map
+            .as_mut_ptr()
+            .add(16)
+            .cast::<std::sync::atomic::AtomicU64>())
+        .store(u64::MAX - 1, Ordering::Release)
+    };
+    let before = map[..].to_vec();
+    let mut snapshot = sample_archive();
+
+    // When
+    let error = daemon
+        .write(&mut snapshot)
+        .expect_err("exhausted sequence must reject");
+
+    // Then
+    assert!(matches!(
+        error,
+        AuraError::SequenceExhausted { sequence } if sequence == u64::MAX - 1
+    ));
+    assert_eq!(&map[..], before.as_slice());
 }
 
 fn assert_archive_fields_equal(expected: &TelemetryArchive, actual: &TelemetryArchive) {

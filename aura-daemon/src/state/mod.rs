@@ -57,7 +57,7 @@ impl ShmHandle {
         // SAFETY: `self.mmap` is a writable `SHM_SIZE` mapping with the expected
         // header and archive buffers; `telemetry` is initialized.
         unsafe {
-            write_double_buffer(self.mmap.as_mut_ptr(), telemetry);
+            write_double_buffer(self.mmap.as_mut_ptr(), telemetry)?;
         }
         Ok(())
     }

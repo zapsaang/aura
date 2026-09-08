@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::path::Path;
+use std::time::Duration;
 
 use aura_common::runtime::RuntimeLocation;
 use aura_common::{
@@ -19,7 +19,6 @@ use memmap2::{Mmap, MmapOptions};
 pub struct TelemetryReader {
     mmap: Mmap,
     _location: RuntimeLocation,
-    path: PathBuf,
 }
 
 impl TelemetryReader {
@@ -42,7 +41,6 @@ impl TelemetryReader {
     }
 
     fn open(location: RuntimeLocation) -> AuraResult<Self> {
-        let path = location.state_path();
         let file = location.open_state_read()?;
         // SAFETY: the validated state fd is exactly `SHM_SIZE`; the read-only
         // mapping length matches the SHM layout.
@@ -55,15 +53,24 @@ impl TelemetryReader {
         Ok(Self {
             mmap,
             _location: location,
-            path,
         })
     }
 
     pub fn read(&self) -> AuraResult<TelemetryArchive> {
         // SAFETY: `self.mmap` covers the full SHM layout and `read_double_buffer` only performs atomic reads from it.
-        let mut snapshot = unsafe {
-            read_double_buffer(self.mmap.as_ptr() as *mut u8)
-                .map_err(|()| AuraError::SeqLockInvalid)?
+        let mut snapshot = match unsafe { read_double_buffer(self.mmap.as_ptr()) } {
+            Ok(snapshot) => snapshot,
+            Err(AuraError::NotPublished) => {
+                return Err(AuraError::Offline(
+                    "telemetry has not been published".to_string(),
+                ));
+            }
+            Err(AuraError::SeqLockTimeout) => {
+                return Err(AuraError::Offline(
+                    "seqlock read retry-admission deadline exhausted".to_string(),
+                ));
+            }
+            Err(error) => return Err(error),
         };
 
         if snapshot.version != ARCHIVE_VERSION {
@@ -81,36 +88,30 @@ impl TelemetryReader {
             return Err(AuraError::ChecksumMismatch { expected, actual });
         }
 
+        if snapshot.meta.timestamp_ns == 0 {
+            return Err(AuraError::Offline(
+                "telemetry producer timestamp is zero".to_string(),
+            ));
+        }
+
         validate_archive(&snapshot)?;
 
         Ok(snapshot)
     }
 
     pub fn is_fresh(&self, telemetry: &TelemetryArchive, threshold: Duration) -> bool {
-        if telemetry.meta.timestamp_ns > 0 {
-            let now = monotonic_ns();
-            let age_ns = now.saturating_sub(telemetry.meta.timestamp_ns);
-            let threshold_ns = threshold.as_nanos() as u64;
-            if age_ns <= threshold_ns {
-                return true;
-            }
-        }
-
-        self.file_is_fresh(threshold)
+        timestamp_is_fresh(telemetry.meta.timestamp_ns, monotonic_ns(), threshold)
     }
+}
 
-    fn file_is_fresh(&self, threshold: Duration) -> bool {
-        let Ok(metadata) = std::fs::metadata(&self.path) else {
-            return false;
-        };
-        let Ok(modified) = metadata.modified() else {
-            return false;
-        };
-        let Ok(elapsed) = SystemTime::now().duration_since(modified) else {
-            return true;
-        };
-        elapsed <= threshold
+/// Compare a producer monotonic timestamp with the consumer's current clock.
+#[doc(hidden)]
+pub fn timestamp_is_fresh(timestamp_ns: u64, now_ns: u64, threshold: Duration) -> bool {
+    if timestamp_ns == 0 || timestamp_ns > now_ns {
+        return false;
     }
+    let threshold_ns = u64::try_from(threshold.as_nanos()).unwrap_or(u64::MAX);
+    now_ns - timestamp_ns <= threshold_ns
 }
 
 #[cfg(test)]

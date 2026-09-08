@@ -2,8 +2,17 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AuraError {
-    #[error("SeqLock validation failed: version mismatch")]
-    SeqLockInvalid,
+    #[error("Telemetry has not been published")]
+    NotPublished,
+
+    #[error("SeqLock read retry-admission deadline exhausted")]
+    SeqLockTimeout,
+
+    #[error("Invalid shared memory header: active buffer index {found}")]
+    InvalidShmHeader { found: u64 },
+
+    #[error("SeqLock sequence exhausted at {sequence}")]
+    SequenceExhausted { sequence: u64 },
 
     #[error("Data checksum mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: u32, actual: u32 },

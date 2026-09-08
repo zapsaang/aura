@@ -28,6 +28,9 @@ pub const MAX_SPIN_WAIT_MS: u64 = 100;
 /// Offline threshold in seconds
 pub const OFFLINE_THRESHOLD_SECS: f64 = 2.0;
 
+/// Maximum elapsed time at which another SeqLock read attempt may begin.
+pub const SEQLOCK_RETRY_ADMISSION_MS: u64 = 10;
+
 /// Maximum number of processes to scan (/proc/PID max)
 pub const MAX_PID: u32 = 65535;
 

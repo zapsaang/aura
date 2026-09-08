@@ -48,7 +48,7 @@ fn write_valid_shm(path: &Path) {
     archive.checksum = archive.calculate_checksum();
     // SAFETY: the mapping is a full writable SHM region and the archive is initialized.
     unsafe {
-        write_double_buffer(mmap.as_mut_ptr(), &archive);
+        write_double_buffer(mmap.as_mut_ptr(), &archive).expect("publish archive");
     }
     mmap.flush().unwrap();
 }

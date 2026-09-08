@@ -73,7 +73,7 @@ fn read_returns_checksum_mismatch_for_corrupt_active_buffer() {
 }
 
 #[test]
-fn freshness_uses_file_mtime_fallback() {
+fn fresh_file_mtime_does_not_override_zero_timestamp() {
     let dir = test_dir("fresh");
     let path = dir.join("state.dat");
     let mut mmap = init_shm_file(&path);
@@ -82,7 +82,7 @@ fn freshness_uses_file_mtime_fallback() {
     let reader = TelemetryReader::new(&path).unwrap();
     let stale = sample_telemetry(20.0);
 
-    assert!(reader.is_fresh(&stale, Duration::from_secs(2)));
+    assert!(!reader.is_fresh(&stale, Duration::from_secs(2)));
     cleanup(&dir);
 }
 
@@ -116,7 +116,7 @@ fn write_snapshot(mmap: &mut memmap2::MmapMut, telemetry: &TelemetryArchive) {
     t.checksum = t.calculate_checksum();
     // SAFETY: `mmap` is a writable full-size test SHM mapping and `t` is a fully initialized snapshot.
     unsafe {
-        write_double_buffer(mmap.as_mut_ptr(), &t);
+        write_double_buffer(mmap.as_mut_ptr(), &t).expect("publish snapshot");
     }
     mmap.flush().unwrap();
 }
