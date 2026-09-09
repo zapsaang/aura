@@ -3,8 +3,6 @@ use std::fs::File;
 use aura_common::{AuraError, AuraResult, FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
 
 use crate::collectors::parsing::{parse_u64_strict, read_reused, split_whitespace, trim_ascii};
-#[cfg(test)]
-use crate::collectors::NetByteSnapshot;
 
 pub fn parse_net_dev(buf: &[u8], out: &mut NetworkStats) -> AuraResult<()> {
     let mut headers = buf.split(|byte| *byte == b'\n');
@@ -117,36 +115,10 @@ pub fn collect(buf: &mut Vec<u8>, out: &mut NetworkStats) -> AuraResult<()> {
 }
 
 #[cfg(test)]
-fn apply_rate_calculations(out: &mut NetworkStats, prev: &mut NetByteSnapshot, delta_secs: f64) {
-    let count = out.if_count as usize;
-    let mut i = 0usize;
-    while i < count && i < MAX_NETIFS {
-        let rx = out.interfaces[i].rx_bytes;
-        let tx = out.interfaces[i].tx_bytes;
-        let (prx, ptx) = prev.interfaces[i];
-        out.interfaces[i].rx_bytes_per_sec = calculate_rate(rx, prx, delta_secs);
-        out.interfaces[i].tx_bytes_per_sec = calculate_rate(tx, ptx, delta_secs);
-        prev.interfaces[i] = (rx, tx);
-        i += 1;
-    }
-    prev.count = count;
-}
-
-#[cfg(test)]
-fn calculate_rate(current: u64, previous: u64, delta_secs: f64) -> f32 {
-    if delta_secs > 0.0 {
-        (current.saturating_sub(previous) as f64 / delta_secs) as f32
-    } else {
-        0.0
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use aura_common::{FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
 
-    use super::{apply_rate_calculations, parse_net_dev};
-    use crate::collectors::NetByteSnapshot;
+    use super::parse_net_dev;
 
     fn empty_stats() -> NetworkStats {
         NetworkStats {
@@ -174,21 +146,5 @@ mod tests {
         assert_eq!(stats.interfaces[0].name.as_str(), "eth0");
         assert_eq!(stats.interfaces[0].rx_bytes, 5678);
         assert_eq!(stats.interfaces[0].tx_bytes, 8765);
-    }
-
-    #[test]
-    fn calculate_net_rates_from_parsed_sample() {
-        let fixture = include_bytes!("../../../tests/fixtures/proc_net_dev_sample.txt");
-        let mut stats = empty_stats();
-        parse_net_dev(fixture, &mut stats).expect("parse");
-
-        let mut prev = NetByteSnapshot::zero();
-        prev.interfaces[0] = (1000, 2000);
-        apply_rate_calculations(&mut stats, &mut prev, 1.0);
-
-        assert_eq!(stats.interfaces[0].rx_bytes_per_sec, 4678.0);
-        assert_eq!(stats.interfaces[0].tx_bytes_per_sec, 6765.0);
-        assert_eq!(prev.interfaces[0], (5678, 8765));
-        assert_eq!(prev.count, 1);
     }
 }

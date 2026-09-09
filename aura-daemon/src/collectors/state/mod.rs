@@ -1,4 +1,8 @@
-use aura_common::{AuraError, TelemetryArchive, MAX_NETIFS, PROC_BUFFER_SIZE};
+use aura_common::{AuraError, TelemetryArchive, MAX_CORES, PROC_BUFFER_SIZE};
+
+mod network;
+
+pub use network::{NetByteSnapshot, NetIfKey, NetIfSlot, NET_KEY_LEN, NET_MAP_CAPACITY};
 
 #[derive(Debug)]
 pub enum ProviderOutcome<T> {
@@ -28,36 +32,46 @@ impl CpuTickSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct NetByteSnapshot {
-    pub interfaces: [(u64, u64); MAX_NETIFS],
-    pub count: usize,
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CpuCoreSnapshot {
+    pub user: u64,
+    pub system: u64,
+    pub idle: u64,
+    pub total: u64,
 }
 
-impl Default for NetByteSnapshot {
-    fn default() -> Self {
-        Self {
-            interfaces: [(0, 0); MAX_NETIFS],
-            count: 0,
-        }
-    }
-}
-
-impl NetByteSnapshot {
+impl CpuCoreSnapshot {
     pub const fn zero() -> Self {
         Self {
-            interfaces: [(0, 0); MAX_NETIFS],
-            count: 0,
+            user: 0,
+            system: 0,
+            idle: 0,
+            total: 0,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct CollectorBaselines {
     pub cpu_ticks: CpuTickSnapshot,
+    pub cores: [CpuCoreSnapshot; MAX_CORES],
+    pub core_count: u8,
     pub net_bytes: NetByteSnapshot,
     pub prev_page_faults: u64,
     pub prev_timestamp_ns: u64,
+}
+
+impl Default for CollectorBaselines {
+    fn default() -> Self {
+        Self {
+            cpu_ticks: CpuTickSnapshot::default(),
+            cores: [CpuCoreSnapshot::default(); MAX_CORES],
+            core_count: 0,
+            net_bytes: NetByteSnapshot::zero(),
+            prev_page_faults: 0,
+            prev_timestamp_ns: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -4,12 +4,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use aura_common::{
-    read_double_buffer, AuraError, AuraResult, TelemetryArchive, CAP_META_UPTIME, MAX_NETIFS,
-    SHM_SIZE,
+    read_double_buffer, AuraError, AuraResult, TelemetryArchive, CAP_META_UPTIME, SHM_SIZE,
 };
 use aura_daemon::collectors::{
-    CollectorScratch, CollectorState, CycleCollector, FixedCollectorState, ProviderOutcome,
-    SystemCollector,
+    CollectorScratch, CollectorState, CycleCollector, FixedCollectorState, NetIfKey,
+    ProviderOutcome, SystemCollector,
 };
 use aura_daemon::finalize::{Clock, ClockSample, SystemFinalizer};
 use aura_daemon::lifecycle::{
@@ -49,11 +48,16 @@ impl CycleCollector for ScriptedCollector {
         state.baselines.cpu_ticks.idle += 3;
         state.baselines.cpu_ticks.total += 4;
         state.baselines.cpu_ticks.context_switches += 5;
-        state.baselines.net_bytes.interfaces[0].0 += 6;
-        state.baselines.net_bytes.interfaces[0].1 += 7;
-        state.baselines.net_bytes.interfaces[1].0 += 8;
-        state.baselines.net_bytes.interfaces[1].1 += 9;
-        state.baselines.net_bytes.count = 2;
+        let key_eth = NetIfKey::from_linux_name(b"eth0");
+        let key_wlan = NetIfKey::from_linux_name(b"wlan0");
+        if let Some(slot) = state.baselines.net_bytes.get_mut(&key_eth) {
+            slot.rx_bytes += 6;
+            slot.tx_bytes += 7;
+        }
+        if let Some(slot) = state.baselines.net_bytes.get_mut(&key_wlan) {
+            slot.rx_bytes += 8;
+            slot.tx_bytes += 9;
+        }
         state.baselines.prev_page_faults += 1;
         state.baselines.prev_timestamp_ns += 10;
         state.archive.meta.uptime_secs += 1;
@@ -240,8 +244,8 @@ pub fn assert_fixed_state_eq(actual: &FixedCollectorState, expected: &FixedColle
         actual.cpu_ticks.context_switches,
         expected.cpu_ticks.context_switches
     );
-    assert_eq!(actual.net_bytes.interfaces, expected.net_bytes.interfaces);
-    assert_eq!(actual.net_bytes.count, expected.net_bytes.count);
+    assert_eq!(actual.net_bytes.slots, expected.net_bytes.slots);
+    assert_eq!(actual.net_bytes.represented, expected.net_bytes.represented);
     assert_eq!(actual.prev_page_faults, expected.prev_page_faults);
     assert_eq!(actual.prev_timestamp_ns, expected.prev_timestamp_ns);
 }
@@ -264,13 +268,32 @@ pub fn assert_baselines_advanced_once(
         actual.cpu_ticks.context_switches,
         previous.cpu_ticks.context_switches + 5
     );
-    let mut expected_interfaces = previous.net_bytes.interfaces;
-    expected_interfaces[0].0 += 6;
-    expected_interfaces[0].1 += 7;
-    expected_interfaces[1].0 += 8;
-    expected_interfaces[1].1 += 9;
-    assert_eq!(actual.net_bytes.interfaces, expected_interfaces);
-    assert_eq!(actual.net_bytes.count, 2);
+    let key_eth = NetIfKey::from_linux_name(b"eth0");
+    let key_wlan = NetIfKey::from_linux_name(b"wlan0");
+    let prev_eth = previous
+        .net_bytes
+        .get(&key_eth)
+        .copied()
+        .expect("eth0 baseline seeded");
+    let prev_wlan = previous
+        .net_bytes
+        .get(&key_wlan)
+        .copied()
+        .expect("wlan0 baseline seeded");
+    let actual_eth = actual
+        .net_bytes
+        .get(&key_eth)
+        .copied()
+        .expect("eth0 baseline advanced");
+    let actual_wlan = actual
+        .net_bytes
+        .get(&key_wlan)
+        .copied()
+        .expect("wlan0 baseline advanced");
+    assert_eq!(actual_eth.rx_bytes, prev_eth.rx_bytes + 6);
+    assert_eq!(actual_eth.tx_bytes, prev_eth.tx_bytes + 7);
+    assert_eq!(actual_wlan.rx_bytes, prev_wlan.rx_bytes + 8);
+    assert_eq!(actual_wlan.tx_bytes, prev_wlan.tx_bytes + 9);
     assert_eq!(actual.prev_page_faults, previous.prev_page_faults + 1);
     assert_eq!(actual.prev_timestamp_ns, previous.prev_timestamp_ns + 10);
 }
@@ -282,13 +305,13 @@ fn initial_committed() -> FixedCollectorState {
     committed.baselines.cpu_ticks.idle = 3;
     committed.baselines.cpu_ticks.total = 4;
     committed.baselines.cpu_ticks.context_switches = 5;
-    committed.baselines.net_bytes.interfaces[0] = (6, 7);
-    committed.baselines.net_bytes.interfaces[1] = (8, 9);
-    for index in 2..MAX_NETIFS {
-        committed.baselines.net_bytes.interfaces[index] =
-            (index as u64 * 10, index as u64 * 10 + 1);
-    }
-    committed.baselines.net_bytes.count = 2;
+    let key_eth = NetIfKey::from_linux_name(b"eth0");
+    let key_wlan = NetIfKey::from_linux_name(b"wlan0");
+    let key_loop = NetIfKey::from_linux_name(b"lo");
+    committed.baselines.net_bytes.insert(key_eth, 1, 6, 7);
+    committed.baselines.net_bytes.insert(key_wlan, 1, 8, 9);
+    committed.baselines.net_bytes.insert(key_loop, 1, 10, 11);
+    committed.baselines.net_bytes.represented = 2;
     committed.baselines.prev_page_faults = 10;
     committed.baselines.prev_timestamp_ns = 100;
     committed.archive.meta.uptime_secs = 10;

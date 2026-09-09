@@ -18,8 +18,9 @@ use crate::lifecycle::Finalizer;
 
 pub use sources::{CollectorSources, MetaGpuAvailability, NetworkAvailability, PlatformSources};
 pub use state::{
-    CollectorBaselines, CollectorScratch, CollectorState, CpuTickSnapshot, CycleCollector,
-    FixedCollectorState, NetByteSnapshot, ProviderOutcome,
+    CollectorBaselines, CollectorScratch, CollectorState, CpuCoreSnapshot, CpuTickSnapshot,
+    CycleCollector, FixedCollectorState, NetByteSnapshot, NetIfKey, NetIfSlot, ProviderOutcome,
+    NET_KEY_LEN, NET_MAP_CAPACITY,
 };
 
 pub struct SystemCollector<S = PlatformSources> {

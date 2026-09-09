@@ -10,6 +10,24 @@ pub struct NetIfStat {
     pub tx_bytes_per_sec: f32,
 }
 
+impl NetIfStat {
+    pub const fn new() -> Self {
+        Self {
+            name: FixedString16::new(),
+            rx_bytes: 0,
+            tx_bytes: 0,
+            rx_bytes_per_sec: 0.0,
+            tx_bytes_per_sec: 0.0,
+        }
+    }
+}
+
+impl Default for NetIfStat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NetworkStats {

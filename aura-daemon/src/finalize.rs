@@ -4,7 +4,7 @@ use aura_common::{
     CAP_MEMORY_PAGE_FAULTS, CAP_MEMORY_RAM_FREE, CAP_MEMORY_RAM_TOTAL, CAP_MEMORY_RAM_USED,
     CAP_MEMORY_SWAP, CAP_META_LOAD_AVERAGE, CAP_META_OS_CODENAME, CAP_META_OS_IDENTITY,
     CAP_META_OS_VERSION, CAP_META_OS_VERSION_ID, CAP_META_TIMEZONE, CAP_META_UPTIME,
-    CAP_META_WALLCLOCK, CAP_NETWORK_BYTES, CAP_NETWORK_RATES,
+    CAP_META_WALLCLOCK, CAP_NETWORK_BYTES, CAP_NETWORK_RATES, MAX_CORES,
 };
 
 use crate::collectors::FixedCollectorState;
@@ -107,7 +107,7 @@ fn zero_unowned(archive: &mut TelemetryArchive) {
         let represented = if caps & CAP_CPU_PER_CORE == 0 {
             0
         } else {
-            (archive.cpu.core_count as usize).min(archive.cpu.cores.len())
+            (archive.cpu.core_count as usize).min(MAX_CORES)
         };
         for core in &mut archive.cpu.cores[represented..] {
             *core = zero.cpu.cores[0];
@@ -131,8 +131,44 @@ fn zero_unowned(archive: &mut TelemetryArchive) {
     zero_meta(archive, &zero, caps);
     if caps & CAP_GPU_ENUMERATION == 0 {
         archive.gpu = zero.gpu;
+    } else {
+        zero_gpu_records(archive, &zero);
     }
-    archive.derived = zero.derived;
+}
+
+fn zero_gpu_records(archive: &mut TelemetryArchive, zero: &TelemetryArchive) {
+    let caps = aura_common::GPU_CAP_NAME
+        | aura_common::GPU_CAP_MEMORY_TOTAL
+        | aura_common::GPU_CAP_MEMORY_USED
+        | aura_common::GPU_CAP_UTILIZATION
+        | aura_common::GPU_CAP_POWER
+        | aura_common::GPU_CAP_TEMPERATURE;
+    for gpu in &mut archive.gpu.gpus {
+        let owned = gpu.capabilities;
+        if owned & caps == 0 {
+            *gpu = zero.gpu.gpus[0];
+        } else {
+            if owned & aura_common::GPU_CAP_NAME == 0 {
+                gpu.name = zero.gpu.gpus[0].name;
+            }
+            if owned & aura_common::GPU_CAP_MEMORY_TOTAL == 0 {
+                gpu.memory_total = 0;
+            }
+            if owned & aura_common::GPU_CAP_MEMORY_USED == 0 {
+                gpu.memory_used = 0;
+            }
+            if owned & aura_common::GPU_CAP_UTILIZATION == 0 {
+                gpu.utilization_percent = 0.0;
+            }
+            if owned & aura_common::GPU_CAP_POWER == 0 {
+                gpu.power_watts = 0.0;
+            }
+            if owned & aura_common::GPU_CAP_TEMPERATURE == 0 {
+                gpu.temperature_celsius = 0;
+                gpu.tone = 0;
+            }
+        }
+    }
 }
 
 fn zero_memory(archive: &mut TelemetryArchive, zero: &TelemetryArchive, caps: u64) {
