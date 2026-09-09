@@ -1,12 +1,23 @@
 use std::fs::File;
-use std::io::Read;
 
-use aura_common::{AuraResult, FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
+use aura_common::{AuraError, AuraResult, FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
 
-use crate::collectors::parsing::{parse_u64, split_whitespace, trim_ascii};
+use crate::collectors::parsing::{parse_u64_strict, read_reused, split_whitespace, trim_ascii};
+#[cfg(test)]
 use crate::collectors::NetByteSnapshot;
 
 pub fn parse_net_dev(buf: &[u8], out: &mut NetworkStats) -> AuraResult<()> {
+    let mut headers = buf.split(|byte| *byte == b'\n');
+    let first = headers.next().unwrap_or_default();
+    let second = headers.next().unwrap_or_default();
+    if !first.starts_with(b"Inter-|")
+        || !trim_ascii(second).starts_with(b"face |")
+        || !contains_bytes(second, b"bytes")
+    {
+        return Err(AuraError::ParseError(
+            "malformed /proc/net/dev headers".to_string(),
+        ));
+    }
     let mut count = 0usize;
     let mut line_start = 0usize;
     let mut line_no = 0usize;
@@ -25,6 +36,9 @@ pub fn parse_net_dev(buf: &[u8], out: &mut NetworkStats) -> AuraResult<()> {
         }
 
         let Some(colon) = line.iter().position(|&c| c == b':') else {
+            if !trim_ascii(line).is_empty() {
+                out.truncated = 1;
+            }
             continue;
         };
 
@@ -32,18 +46,16 @@ pub fn parse_net_dev(buf: &[u8], out: &mut NetworkStats) -> AuraResult<()> {
         if name == b"lo" || name.starts_with(b"docker") || name.starts_with(b"veth") {
             continue;
         }
+        if name.is_empty() {
+            out.truncated = 1;
+            continue;
+        }
 
         let values = trim_ascii(&line[colon + 1..]);
-        let mut rx = 0u64;
-        let mut tx = 0u64;
-        for (idx, tok) in split_whitespace(values).enumerate() {
-            if idx == 0 {
-                rx = parse_u64(tok).unwrap_or(0);
-            } else if idx == 8 {
-                tx = parse_u64(tok).unwrap_or(0);
-                break;
-            }
-        }
+        let Ok((rx, tx)) = parse_interface_counters(values) else {
+            out.truncated = 1;
+            continue;
+        };
 
         if count >= MAX_NETIFS {
             out.truncated = 1;
@@ -63,22 +75,48 @@ pub fn parse_net_dev(buf: &[u8], out: &mut NetworkStats) -> AuraResult<()> {
     Ok(())
 }
 
-pub fn collect(
-    buf: &mut Vec<u8>,
-    out: &mut NetworkStats,
-    prev: &mut NetByteSnapshot,
-    delta_secs: f64,
-) -> AuraResult<()> {
+fn parse_interface_counters(values: &[u8]) -> AuraResult<(u64, u64)> {
+    let mut rx = None;
+    let mut tx = None;
+    let mut count = 0usize;
+    for (index, token) in split_whitespace(values).take(9).enumerate() {
+        let value = parse_u64_strict(token)?;
+        count += 1;
+        if index == 0 {
+            rx = Some(value);
+        } else if index == 8 {
+            tx = Some(value);
+        }
+    }
+    if count < 9 {
+        return Err(AuraError::ParseError(
+            "malformed /proc/net/dev interface row".to_string(),
+        ));
+    }
+    match (rx, tx) {
+        (Some(rx), Some(tx)) => Ok((rx, tx)),
+        _ => Err(AuraError::ParseError(
+            "malformed /proc/net/dev interface row".to_string(),
+        )),
+    }
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+pub fn collect(buf: &mut Vec<u8>, out: &mut NetworkStats) -> AuraResult<()> {
     buf.clear();
     let mut f = File::open("/proc/net/dev")?;
-    f.read_to_end(buf)?;
+    read_reused(&mut f, buf)?;
     parse_net_dev(&buf[..], out)?;
-
-    apply_rate_calculations(out, prev, delta_secs);
 
     Ok(())
 }
 
+#[cfg(test)]
 fn apply_rate_calculations(out: &mut NetworkStats, prev: &mut NetByteSnapshot, delta_secs: f64) {
     let count = out.if_count as usize;
     let mut i = 0usize;
@@ -94,6 +132,7 @@ fn apply_rate_calculations(out: &mut NetworkStats, prev: &mut NetByteSnapshot, d
     prev.count = count;
 }
 
+#[cfg(test)]
 fn calculate_rate(current: u64, previous: u64, delta_secs: f64) -> f32 {
     if delta_secs > 0.0 {
         (current.saturating_sub(previous) as f64 / delta_secs) as f32

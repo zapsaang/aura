@@ -404,9 +404,10 @@ fn written_data_survives_reopen() {
     let path = state_path(&dir);
     {
         let mut handle = ShmHandle::new(&path).unwrap();
-        // SAFETY: `TelemetryArchive` is `Zeroable`; the all-zero pattern is valid.
-        let mut archive = unsafe { std::mem::zeroed::<TelemetryArchive>() };
-        handle.write(&mut archive).unwrap();
+        let mut archive = TelemetryArchive::zeroed();
+        archive.version = aura_common::ARCHIVE_VERSION;
+        archive.checksum = archive.calculate_checksum();
+        handle.write(&archive).unwrap();
     }
     let bytes = bytes_of(&path);
     let active = u64::from_le_bytes(bytes[0..8].try_into().unwrap()) & 1;

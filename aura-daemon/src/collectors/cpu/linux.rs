@@ -1,16 +1,11 @@
 use std::fs::File;
-use std::io::Read;
-use std::sync::OnceLock;
 
-use aura_common::{AuraResult, CpuCoreStat, CpuGlobalStat, MAX_CORES};
-use log::warn;
+use aura_common::{AuraError, AuraResult, CpuCoreStat, CpuGlobalStat, MAX_CORES};
 
-use crate::collectors::parsing::{parse_u64, split_whitespace};
-use crate::collectors::CpuTickSnapshot;
+use super::CpuAvailability;
+use crate::collectors::parsing::{parse_u64_strict, read_reused, split_whitespace};
 
-static CORE_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
-
-pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
+pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, Option<u64>)> {
     let mut user = 0u64;
     let mut nice = 0u64;
     let mut system = 0u64;
@@ -19,7 +14,8 @@ pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
     let mut irq = 0u64;
     let mut softirq = 0u64;
     let mut steal = 0u64;
-    let mut ctxt = 0u64;
+    let mut ctxt = None;
+    let mut saw_global = false;
 
     let mut line_start = 0usize;
     for i in 0..buf.len() {
@@ -30,9 +26,12 @@ pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
         line_start = i + 1;
 
         if line.starts_with(b"cpu ") {
+            saw_global = true;
             let fields = &line[4..];
+            let mut field_count = 0usize;
             for (idx, field) in split_whitespace(fields).enumerate() {
-                let v = parse_u64(field)?;
+                let v = parse_tick(field)?;
+                field_count += 1;
                 match idx {
                     0 => user = v,
                     1 => nice = v,
@@ -45,12 +44,25 @@ pub fn parse_cpu_stat(buf: &[u8]) -> AuraResult<(u64, u64, u64, u64, u64)> {
                     _ => {}
                 }
             }
+            if field_count < 4 {
+                return Err(AuraError::ParseError(
+                    "malformed global /proc/stat CPU row".to_string(),
+                ));
+            }
         } else if line.starts_with(b"ctxt ") {
-            ctxt = parse_u64(&line[5..])?;
+            ctxt = parse_tick(&line[5..]).ok();
         }
     }
 
-    let total = user + nice + system + idle + iowait + irq + softirq + steal;
+    if !saw_global {
+        return Err(AuraError::ParseError(
+            "missing global /proc/stat CPU row".to_string(),
+        ));
+    }
+    let total = [user, nice, system, idle, iowait, irq, softirq, steal]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
+        .ok_or_else(|| AuraError::ParseError("/proc/stat CPU total overflow".to_string()))?;
     Ok((user, system, idle, total, ctxt))
 }
 
@@ -86,17 +98,27 @@ pub fn parse_core_stats(
         }
 
         let mut fields = [0u64; 8];
+        let mut field_count = 0usize;
         for (fi, field) in split_whitespace(&line[field_start..]).enumerate() {
             if fi >= fields.len() {
                 break;
             }
-            fields[fi] = parse_u64(field)?;
+            fields[fi] = parse_tick(field)?;
+            field_count += 1;
+        }
+        if field_count < 4 {
+            return Err(AuraError::ParseError(
+                "malformed /proc/stat CPU core row".to_string(),
+            ));
         }
 
         let user = fields[0];
         let system = fields[2];
         let idle = fields[3];
-        let total = fields.iter().copied().sum();
+        let total = fields
+            .into_iter()
+            .try_fold(0_u64, u64::checked_add)
+            .ok_or_else(|| AuraError::ParseError("/proc/stat core total overflow".to_string()))?;
 
         out_cores[count] = CpuCoreStat {
             core_index: count as u8,
@@ -115,60 +137,36 @@ pub fn parse_core_stats(
         count += 1;
     }
 
-    if count >= MAX_CORES && CORE_LIMIT_WARNED.get().is_none() {
-        warn!(
-            "CPU core limit reached: {} cores detected (MAX_CORES={}). \
-            Run 'cat /proc/cpuinfo' to see all cores.",
-            count, MAX_CORES
-        );
-        CORE_LIMIT_WARNED.set(()).ok();
-    }
-
     *core_count = count as u8;
     Ok(())
 }
 
-pub fn collect(
-    buf: &mut Vec<u8>,
-    out: &mut CpuGlobalStat,
-    prev: &mut CpuTickSnapshot,
-    delta_secs: f64,
-) -> AuraResult<()> {
+fn parse_tick(field: &[u8]) -> AuraResult<u64> {
+    parse_u64_strict(field)
+}
+
+pub fn collect(buf: &mut Vec<u8>, out: &mut CpuGlobalStat) -> AuraResult<CpuAvailability> {
     buf.clear();
     let mut file = File::open("/proc/stat")?;
-    file.read_to_end(buf)?;
-    let data = &buf[..];
+    read_reused(&mut file, buf)?;
+    collect_from_bytes(buf, out)
+}
 
+pub fn collect_from_bytes(data: &[u8], out: &mut CpuGlobalStat) -> AuraResult<CpuAvailability> {
     let (user, system, idle, total, ctxt) = parse_cpu_stat(data)?;
-
-    let delta_total = total.saturating_sub(prev.total);
-    let delta_idle = idle.saturating_sub(prev.idle);
-    let delta_ctxt = ctxt.saturating_sub(prev.context_switches);
-
-    prev.user = user;
-    prev.system = system;
-    prev.idle = idle;
-    prev.total = total;
-    prev.context_switches = ctxt;
 
     out.user_ticks = user;
     out.system_ticks = system;
     out.idle_ticks = idle;
     out.total_ticks = total;
-    out.context_switches = ctxt;
-    out.context_switches_per_sec = if delta_secs > 0.0 {
-        (delta_ctxt as f64 / delta_secs) as f32
-    } else {
-        0.0
-    };
-    out.usage_percent = if delta_total > 0 {
-        let busy = delta_total.saturating_sub(delta_idle);
-        ((busy as f64 / delta_total as f64) * 100.0) as f32
-    } else {
-        0.0
-    };
+    out.context_switches = ctxt.unwrap_or(0);
+    out.context_switches_per_sec = 0.0;
+    out.usage_percent = 0.0;
 
-    parse_core_stats(data, &mut out.cores, &mut out.core_count)
+    parse_core_stats(data, &mut out.cores, &mut out.core_count)?;
+    Ok(CpuAvailability {
+        context_switches: ctxt.is_some(),
+    })
 }
 
 #[cfg(test)]
@@ -184,7 +182,7 @@ mod tests {
         assert_eq!(system, 2290);
         assert_eq!(idle, 22625563);
         assert!(total > idle);
-        assert_eq!(ctxt, 1990473);
+        assert_eq!(ctxt, Some(1990473));
     }
 
     #[test]

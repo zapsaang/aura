@@ -24,8 +24,6 @@ pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {
 }
 
 pub fn collect(meta: &mut MetaStats) -> AuraResult<()> {
-    meta.timestamp_ns = aura_common::monotonic_ns();
-
     let mut buf = [0u8; 4096];
 
     if let Ok(mut f) = File::open("/proc/uptime") {

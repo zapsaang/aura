@@ -69,10 +69,10 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
     let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-ipc-roundtrip.dat");
 
-    let mut expected = sample_archive();
+    let expected = sample_archive();
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
-    shm.write(&mut expected).expect("write telemetry snapshot");
+    shm.write(&expected).expect("write telemetry snapshot");
 
     let reader = TelemetryReader::new(&path).expect("open telemetry reader");
     let actual = reader.read().expect("read telemetry snapshot");
@@ -140,9 +140,11 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
     // Write twice to cycle: first write->buffer1(active=1), second write->buffer0(active=0)
     let mut archive = sample_archive();
     archive.meta.timestamp_ns = 42;
-    shm.write(&mut archive).expect("first write to buffer 1");
+    refresh_checksum(&mut archive);
+    shm.write(&archive).expect("first write to buffer 1");
     archive.meta.timestamp_ns = 43;
-    shm.write(&mut archive).expect("second write to buffer 0");
+    refresh_checksum(&mut archive);
+    shm.write(&archive).expect("second write to buffer 0");
 
     // Manipulate header to simulate false contention:
     // active=0 (reader reads buffer 0), seq[0]=2 (valid), seq[1]=1 (writer on buffer 1)
@@ -194,7 +196,8 @@ fn reader_blocked_by_writer_on_same_buffer() {
 
     let mut archive = sample_archive();
     archive.version = 77;
-    shm.write(&mut archive).expect("seed archive");
+    refresh_checksum(&mut archive);
+    shm.write(&archive).expect("seed archive");
 
     let file = OpenOptions::new()
         .read(true)
@@ -232,11 +235,11 @@ fn reader_blocked_by_writer_on_same_buffer() {
 fn double_buffer_writer_advances_header_state() {
     let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-ipc-header-state.dat");
-    let mut expected = sample_archive();
+    let expected = sample_archive();
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
-    shm.write(&mut expected).expect("write snapshot");
-    shm.write(&mut expected).expect("write second snapshot");
+    shm.write(&expected).expect("write snapshot");
+    shm.write(&expected).expect("write second snapshot");
 
     let file = OpenOptions::new()
         .read(true)
@@ -273,7 +276,8 @@ fn restart_recovers_abandoned_odd_sequence() {
     let mut first = ShmHandle::new(&path).expect("create first daemon handle");
     let mut old = sample_archive();
     old.meta.timestamp_ns = 501;
-    first.write(&mut old).expect("seed old snapshot");
+    refresh_checksum(&mut old);
+    first.write(&old).expect("seed old snapshot");
     drop(first);
     let file = OpenOptions::new()
         .read(true)
@@ -299,7 +303,8 @@ fn restart_recovers_abandoned_odd_sequence() {
     let mut restarted = ShmHandle::new(&path).expect("restart daemon handle");
     let mut new = sample_archive();
     new.meta.timestamp_ns = 502;
-    restarted.write(&mut new).expect("recover and publish");
+    refresh_checksum(&mut new);
+    restarted.write(&new).expect("recover and publish");
 
     // Then
     let reader = TelemetryReader::new(&path).expect("open reader");
@@ -321,16 +326,14 @@ fn restart_preserves_existing_even_generations() {
     let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-restart-even.dat");
     let mut first = ShmHandle::new(&path).expect("create first daemon handle");
-    let mut snapshot = sample_archive();
-    first.write(&mut snapshot).expect("publish buffer one");
-    first.write(&mut snapshot).expect("publish buffer zero");
+    let snapshot = sample_archive();
+    first.write(&snapshot).expect("publish buffer one");
+    first.write(&snapshot).expect("publish buffer zero");
     drop(first);
 
     // When
     let mut restarted = ShmHandle::new(&path).expect("restart daemon handle");
-    restarted
-        .write(&mut snapshot)
-        .expect("publish after restart");
+    restarted.write(&snapshot).expect("publish after restart");
 
     // Then
     let file = OpenOptions::new().read(true).open(&path).unwrap();
@@ -365,11 +368,11 @@ fn corrupt_active_header_rejects_write_without_state_mutation() {
         (*map.as_mut_ptr().cast::<std::sync::atomic::AtomicU64>()).store(2, Ordering::Release)
     };
     let before = map[..].to_vec();
-    let mut snapshot = sample_archive();
+    let snapshot = sample_archive();
 
     // When
     let error = daemon
-        .write(&mut snapshot)
+        .write(&snapshot)
         .expect_err("corrupt active header must reject");
 
     // Then
@@ -401,11 +404,11 @@ fn exhausted_sequence_rejects_write_without_state_mutation() {
         .store(u64::MAX - 1, Ordering::Release)
     };
     let before = map[..].to_vec();
-    let mut snapshot = sample_archive();
+    let snapshot = sample_archive();
 
     // When
     let error = daemon
-        .write(&mut snapshot)
+        .write(&snapshot)
         .expect_err("exhausted sequence must reject");
 
     // Then
@@ -625,5 +628,11 @@ fn sample_archive() -> TelemetryArchive {
     t.gpu.gpus[0].temperature_celsius = 61;
     t.gpu.gpus[0].available = 1;
 
+    refresh_checksum(&mut t);
     t
+}
+
+fn refresh_checksum(archive: &mut TelemetryArchive) {
+    archive.checksum = 0;
+    archive.checksum = archive.calculate_checksum();
 }

@@ -27,7 +27,7 @@ pub fn boot_time() -> AuraResult<u64> {
     let bt = unsafe { boot_time_val.assume_init() };
     // SAFETY: `time` permits a null output pointer when only the return value is needed.
     let now = unsafe { libc::time(std::ptr::null_mut()) };
-    Ok(now.saturating_sub(bt.tv_sec as i64) as u64)
+    Ok(now.saturating_sub(bt.tv_sec) as u64)
 }
 
 pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {

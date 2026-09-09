@@ -56,8 +56,8 @@ fn ipc_concurrent_reader_writer_stress() {
     let shm_path = temp_dir.path().join("aura-ipc-concurrent.dat");
 
     let mut handle = ShmHandle::new(&shm_path).expect("create shm handle");
-    let mut initial = make_archive(1);
-    handle.write(&mut initial).expect("seed initial telemetry");
+    let initial = make_archive(1);
+    handle.write(&initial).expect("seed initial telemetry");
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let latest_writer_version = Arc::new(AtomicU64::new(1));
@@ -169,10 +169,10 @@ fn run_writer_loop(
 
     while !shutdown.load(Ordering::SeqCst) {
         version = version.saturating_add(1);
-        let mut telemetry = make_archive(version);
+        let telemetry = make_archive(version);
 
         stats.total_writes = stats.total_writes.saturating_add(1);
-        match handle.write(&mut telemetry) {
+        match handle.write(&telemetry) {
             Ok(()) => {
                 stats.latest_committed_version = version;
                 latest_version.store(version, Ordering::SeqCst);
@@ -368,7 +368,7 @@ fn writer_generations_increase_under_repeated_publications() {
     // When
     for marker in 1..=128 {
         writer
-            .write(&mut make_archive(marker))
+            .write(&make_archive(marker))
             .expect("publish generation");
         let current = [
             header.seq[0].load(Ordering::Acquire),
@@ -394,9 +394,7 @@ fn concurrent_abandoned_sequence_recovery_never_returns_mixed_archive() {
     }
     let path = temp_dir.path().join("recovery-state.dat");
     let mut writer = ShmHandle::new(&path).expect("create writer");
-    writer
-        .write(&mut make_archive(300))
-        .expect("seed old snapshot");
+    writer.write(&make_archive(300)).expect("seed old snapshot");
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -432,7 +430,7 @@ fn concurrent_abandoned_sequence_recovery_never_returns_mixed_archive() {
     // When
     barrier.wait();
     writer
-        .write(&mut make_archive(301))
+        .write(&make_archive(301))
         .expect("recover abandoned sequence");
 
     // Then
@@ -525,22 +523,20 @@ fn multiprocess_writer_child() {
     let done = required_path("AURA_IPC_DONE");
     let observed = required_path("AURA_IPC_OBSERVED");
     let mut writer = ShmHandle::new(&state).expect("child creates state");
-    writer
-        .write(&mut make_archive(1))
-        .expect("child seeds state");
+    writer.write(&make_archive(1)).expect("child seeds state");
     File::create(ready).expect("signal writer ready");
     wait_for_marker(&start).expect("wait for parent release");
 
     // When
     for marker in 2..=MULTIPROCESS_HANDOFF_GENERATION {
         writer
-            .write(&mut make_archive(marker))
+            .write(&make_archive(marker))
             .expect("child publishes snapshot");
     }
     wait_for_marker(&observed).expect("wait for reader intermediate observation");
     for marker in (MULTIPROCESS_HANDOFF_GENERATION + 1)..=MULTIPROCESS_FINAL_GENERATION {
         writer
-            .write(&mut make_archive(marker))
+            .write(&make_archive(marker))
             .expect("child publishes snapshot");
     }
 

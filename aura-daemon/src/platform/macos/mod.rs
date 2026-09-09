@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStats};
 
 #[cfg(target_os = "macos")]
-use self::{cpu::CpuSnapshot, ffi::MachPort, process::ProcessSnapshot};
+use self::{ffi::MachPort, process::ProcessSnapshot};
 
 pub use metadata::{boot_time, cache_os_fingerprint};
 
@@ -45,8 +45,6 @@ pub struct MacosPlatform {
     host_port: MachPort,
     #[cfg(target_os = "macos")]
     process_snapshot: Mutex<ProcessSnapshot>,
-    #[cfg(target_os = "macos")]
-    cpu_snapshot: Mutex<CpuSnapshot>,
 }
 
 impl MacosPlatform {
@@ -55,11 +53,10 @@ impl MacosPlatform {
         {
             // SAFETY: `mach_host_self` takes no arguments and returns the current task's host send right.
             let host_port = unsafe { ffi::mach_host_self() };
-            return Ok(Self {
+            Ok(Self {
                 host_port,
                 process_snapshot: Mutex::new(ProcessSnapshot::default()),
-                cpu_snapshot: Mutex::new(CpuSnapshot::default()),
-            });
+            })
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -79,7 +76,7 @@ impl PlatformStatsProvider for MacosPlatform {
     fn cpu_stats(&self) -> AuraResult<CpuGlobalStat> {
         #[cfg(target_os = "macos")]
         {
-            return cpu::collect(self);
+            cpu::collect(self)
         }
         #[cfg(not(target_os = "macos"))]
         Err(AuraError::PlatformNotSupported(
@@ -90,7 +87,7 @@ impl PlatformStatsProvider for MacosPlatform {
     fn memory_stats(&self) -> AuraResult<MemoryStats> {
         #[cfg(target_os = "macos")]
         {
-            return memory::collect(self);
+            memory::collect(self)
         }
         #[cfg(not(target_os = "macos"))]
         Err(AuraError::PlatformNotSupported(
@@ -101,7 +98,7 @@ impl PlatformStatsProvider for MacosPlatform {
     fn process_stats(&self) -> AuraResult<ProcessStats> {
         #[cfg(target_os = "macos")]
         {
-            return process::collect(self);
+            process::collect(self)
         }
         #[cfg(not(target_os = "macos"))]
         Err(AuraError::PlatformNotSupported(

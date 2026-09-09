@@ -49,6 +49,4 @@ extern "C" {
         buffer: *mut libc::c_void,
         buffersize: libc::c_uint,
     ) -> libc::c_int;
-    pub(super) fn mach_absolute_time() -> u64;
-    pub(super) fn mach_timebase_info(info: *mut libc::mach_timebase_info_data_t) -> KernReturn;
 }
