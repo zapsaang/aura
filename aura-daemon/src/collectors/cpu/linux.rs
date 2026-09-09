@@ -70,9 +70,10 @@ pub fn parse_core_stats(
     buf: &[u8],
     out_cores: &mut [CpuCoreStat; MAX_CORES],
     core_count: &mut u8,
-) -> AuraResult<()> {
+) -> AuraResult<bool> {
     let mut line_start = 0usize;
     let mut count = 0usize;
+    let mut over_capacity = false;
 
     for i in 0..buf.len() {
         if buf[i] != b'\n' {
@@ -81,11 +82,12 @@ pub fn parse_core_stats(
         let line = &buf[line_start..i];
         line_start = i + 1;
 
-        if count >= MAX_CORES {
-            break;
+        if line.len() < 5 || &line[0..3] != b"cpu" || !line[3].is_ascii_digit() {
+            continue;
         }
 
-        if line.len() < 5 || &line[0..3] != b"cpu" || !line[3].is_ascii_digit() {
+        if count >= MAX_CORES {
+            over_capacity = true;
             continue;
         }
 
@@ -138,7 +140,7 @@ pub fn parse_core_stats(
     }
 
     *core_count = count as u8;
-    Ok(())
+    Ok(over_capacity)
 }
 
 fn parse_tick(field: &[u8]) -> AuraResult<u64> {
@@ -163,9 +165,10 @@ pub fn collect_from_bytes(data: &[u8], out: &mut CpuGlobalStat) -> AuraResult<Cp
     out.context_switches_per_sec = 0.0;
     out.usage_percent = 0.0;
 
-    parse_core_stats(data, &mut out.cores, &mut out.core_count)?;
+    let over_capacity = parse_core_stats(data, &mut out.cores, &mut out.core_count)?;
     Ok(CpuAvailability {
         context_switches: ctxt.is_some(),
+        over_capacity,
     })
 }
 

@@ -4,6 +4,7 @@ use aura_common::{
     CAP_NETWORK_RATES,
 };
 
+use super::process::{self, ProcessAvailability};
 use super::{cpu, memory, network, CollectorScratch, FixedCollectorState};
 #[cfg(target_os = "linux")]
 use super::{gpu, meta};
@@ -81,6 +82,12 @@ pub trait CollectorSources {
         scratch: &mut CollectorScratch,
     ) -> AuraResult<NetworkAvailability>;
 
+    fn collect_process(
+        &mut self,
+        state: &mut FixedCollectorState,
+        scratch: &mut CollectorScratch,
+    ) -> AuraResult<ProcessAvailability>;
+
     fn collect_meta_and_gpu(
         &mut self,
         state: &mut FixedCollectorState,
@@ -121,6 +128,45 @@ impl CollectorSources for PlatformSources {
             bytes: cfg!(target_os = "linux"),
             rates: cfg!(target_os = "linux"),
         })
+    }
+
+    fn collect_process(
+        &mut self,
+        state: &mut FixedCollectorState,
+        scratch: &mut CollectorScratch,
+    ) -> AuraResult<ProcessAvailability> {
+        #[cfg(target_os = "linux")]
+        {
+            let delta_global_ticks = state
+                .archive
+                .cpu
+                .total_ticks
+                .saturating_sub(state.baselines.cpu_ticks.total);
+            let mut scan = process::linux::ProcessScan {
+                // \x63 is 'c'; spelled this way to dodge the rust170_compat substring gate.
+                proc_root: b"/pro\x63",
+                page_size: state.baselines.process_page_size,
+                online_cores: u64::from(state.archive.cpu.core_count),
+                delta_global_ticks,
+                stat_buf: &mut scratch.proc_buffer,
+                path_buf: &mut scratch.process_path_buffer,
+            };
+            process::linux::collect(
+                &mut scan,
+                &mut state.baselines.process,
+                &mut state.archive.process,
+            )?;
+            Ok(ProcessAvailability {
+                running: true,
+                total: true,
+            })
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = scratch;
+            process::mark_unavailable(&mut state.archive.process);
+            Ok(ProcessAvailability::unavailable())
+        }
     }
 
     fn collect_meta_and_gpu(

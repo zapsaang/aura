@@ -9,6 +9,23 @@ pub struct ProcessStat {
     pub comm: FixedString16,
 }
 
+impl ProcessStat {
+    pub const fn new() -> Self {
+        Self {
+            pid: 0,
+            cpu_usage: 0.0,
+            memory_bytes: 0,
+            comm: FixedString16::new(),
+        }
+    }
+}
+
+impl Default for ProcessStat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessStats {

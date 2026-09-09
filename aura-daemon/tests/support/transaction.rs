@@ -1,4 +1,6 @@
 use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -6,6 +8,12 @@ use std::time::Duration;
 use aura_common::{
     read_double_buffer, AuraError, AuraResult, TelemetryArchive, CAP_META_UPTIME, SHM_SIZE,
 };
+#[cfg(target_os = "linux")]
+use aura_daemon::collectors::process::linux::{
+    collect_with_directory, ProcessDirectory, ProcessScan, DIRENT_BUF_LEN,
+};
+#[cfg(target_os = "linux")]
+use aura_daemon::collectors::process::ProcessBaseSnapshot;
 use aura_daemon::collectors::{
     CollectorScratch, CollectorState, CycleCollector, FixedCollectorState, NetIfKey,
     ProviderOutcome, SystemCollector,
@@ -196,13 +204,81 @@ pub type AllocationLifecycle = Lifecycle<
     RecordingSleeper,
 >;
 
+#[cfg(target_os = "linux")]
+pub type MidScanFailureLifecycle = Lifecycle<
+    MidScanFatalCollector,
+    ScriptedFinalizer,
+    MmapPublisher,
+    RecordingNotifier,
+    RecordingSleeper,
+>;
+
+#[cfg(target_os = "linux")]
+pub struct MidScanFatalCollector {
+    process_root: TempDir,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct OnePidThenFatal {
+    reads: u8,
+}
+
+#[cfg(target_os = "linux")]
+impl ProcessDirectory for OnePidThenFatal {
+    fn read(&mut self, buf: &mut [u8; DIRENT_BUF_LEN]) -> AuraResult<usize> {
+        if self.reads != 0 {
+            return Err(AuraError::Fatal("injected getdents64 failure".to_string()));
+        }
+        self.reads = 1;
+        let record_len = 21u16;
+        let bytes = record_len.to_ne_bytes();
+        buf[16] = bytes[0];
+        buf[17] = bytes[1];
+        buf[18] = libc::DT_DIR;
+        buf[19] = b'7';
+        buf[20] = 0;
+        Ok(usize::from(record_len))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl CycleCollector for MidScanFatalCollector {
+    fn collect(
+        &mut self,
+        state: &mut FixedCollectorState,
+        scratch: &mut CollectorScratch,
+    ) -> ProviderOutcome<()> {
+        state.baselines.process_page_size = 8192;
+        let mut reader = OnePidThenFatal::default();
+        let mut scan = ProcessScan {
+            proc_root: self.process_root.path().as_os_str().as_bytes(),
+            page_size: state.baselines.process_page_size,
+            online_cores: 1,
+            delta_global_ticks: 100,
+            stat_buf: &mut scratch.proc_buffer,
+            path_buf: &mut scratch.process_path_buffer,
+        };
+        match collect_with_directory(
+            &mut scan,
+            &mut state.baselines.process,
+            &mut state.archive.process,
+            &mut reader,
+        ) {
+            Ok(()) => ProviderOutcome::Available(()),
+            Err(error) => ProviderOutcome::Fatal(error),
+        }
+    }
+}
+
 pub fn lifecycle(failure: Failure, notify_failure: Option<usize>) -> TestLifecycle {
     let committed = initial_committed();
+    let publisher = MmapPublisher::new(&committed.archive, failure);
     let state = CollectorState::with_committed(committed);
     let parts = LifecycleParts {
         collector: scripted_collector(failure),
         finalizer: ScriptedFinalizer { calls: 0, failure },
-        publisher: MmapPublisher::new(&committed.archive, failure),
+        publisher,
         notifier: RecordingNotifier {
             calls: 0,
             fail_on: notify_failure,
@@ -215,13 +291,50 @@ pub fn lifecycle(failure: Failure, notify_failure: Option<usize>) -> TestLifecyc
 
 pub fn allocation_lifecycle() -> AllocationLifecycle {
     let committed = initial_committed();
+    let publisher = MmapPublisher::new(&committed.archive, Failure::None);
     let state = CollectorState::with_committed(committed);
     let parts = LifecycleParts {
         collector: SystemCollector::with_sources(DeterministicSources::default()),
         finalizer: SystemFinalizer::new(SteppingClock {
             next_monotonic_ns: 1_000,
         }),
-        publisher: MmapPublisher::new(&committed.archive, Failure::None),
+        publisher,
+        notifier: RecordingNotifier {
+            calls: 0,
+            fail_on: None,
+            notifications: [None; 4],
+        },
+        sleeper: RecordingSleeper::default(),
+    };
+    Lifecycle::new(state, parts)
+}
+
+#[cfg(target_os = "linux")]
+pub fn mid_scan_failure_lifecycle() -> MidScanFailureLifecycle {
+    let process_root = tempfile::tempdir().expect("temporary proc root");
+    let pid_root = process_root.path().join("7");
+    std::fs::create_dir(&pid_root).expect("pid directory");
+    std::fs::write(
+        pid_root.join("stat"),
+        b"7 (partial) R 1 7 7 0 -1 4194304 100 0 0 0 1 1 0 0 20 0 1 0 7 200 1 1 1 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0 0 0 0",
+    )
+    .expect("pid stat");
+
+    let mut committed = initial_committed();
+    committed.baselines.process_page_size = 4096;
+    committed
+        .baselines
+        .process
+        .insert((99, 99), ProcessBaseSnapshot { utime: 3, stime: 4 });
+    let publisher = MmapPublisher::new(&committed.archive, Failure::None);
+    let state = CollectorState::with_committed(committed);
+    let parts = LifecycleParts {
+        collector: MidScanFatalCollector { process_root },
+        finalizer: ScriptedFinalizer {
+            calls: 0,
+            failure: Failure::None,
+        },
+        publisher,
         notifier: RecordingNotifier {
             calls: 0,
             fail_on: None,
@@ -234,6 +347,7 @@ pub fn allocation_lifecycle() -> AllocationLifecycle {
 
 pub fn assert_fixed_state_eq(actual: &FixedCollectorState, expected: &FixedCollectorState) {
     assert_archive_eq(&actual.archive, &expected.archive);
+    assert_eq!(actual.cpu_over_capacity, expected.cpu_over_capacity);
     let actual = &actual.baselines;
     let expected = &expected.baselines;
     assert_eq!(actual.cpu_ticks.user, expected.cpu_ticks.user);
@@ -246,6 +360,30 @@ pub fn assert_fixed_state_eq(actual: &FixedCollectorState, expected: &FixedColle
     );
     assert_eq!(actual.net_bytes.slots, expected.net_bytes.slots);
     assert_eq!(actual.net_bytes.represented, expected.net_bytes.represented);
+    assert_eq!(actual.core_count, expected.core_count);
+    for (actual_core, expected_core) in actual.cores.iter().zip(expected.cores.iter()) {
+        assert_eq!(actual_core.user, expected_core.user);
+        assert_eq!(actual_core.system, expected_core.system);
+        assert_eq!(actual_core.idle, expected_core.idle);
+        assert_eq!(actual_core.total, expected_core.total);
+    }
+    assert_eq!(actual.process_page_size, expected.process_page_size);
+    assert_eq!(
+        actual.process.current_generation,
+        expected.process.current_generation
+    );
+    for (actual_slot, expected_slot) in actual
+        .process
+        .slots
+        .iter()
+        .zip(expected.process.slots.iter())
+    {
+        assert_eq!(actual_slot.pid, expected_slot.pid);
+        assert_eq!(actual_slot.generation, expected_slot.generation);
+        assert_eq!(actual_slot.starttime, expected_slot.starttime);
+        assert_eq!(actual_slot.stat.utime, expected_slot.stat.utime);
+        assert_eq!(actual_slot.stat.stime, expected_slot.stat.stime);
+    }
     assert_eq!(actual.prev_page_faults, expected.prev_page_faults);
     assert_eq!(actual.prev_timestamp_ns, expected.prev_timestamp_ns);
 }

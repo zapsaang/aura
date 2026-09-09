@@ -16,7 +16,7 @@ impl HeapEntry {
 
 impl PartialEq for HeapEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+        self.key == other.key && self.stat.pid == other.stat.pid
     }
 }
 impl Eq for HeapEntry {}
@@ -26,8 +26,12 @@ impl PartialOrd for HeapEntry {
     }
 }
 impl Ord for HeapEntry {
+    /// Min-heap order on the metric key; on ties the larger PID counts as
+    /// "smaller" so it is evicted first, keeping output PID-ascending.
     fn cmp(&self, other: &Self) -> Ordering {
-        self.key.cmp(&other.key)
+        self.key
+            .cmp(&other.key)
+            .then_with(|| other.stat.pid.cmp(&self.stat.pid))
     }
 }
 
@@ -96,6 +100,14 @@ impl MinHeap5 {
             self.heap.swap(i, s);
             i = s;
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
     }
 
     pub fn as_desc_array(&self) -> [ProcessStat; MAX_TOP_N] {

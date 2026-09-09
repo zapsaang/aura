@@ -25,6 +25,8 @@ use aura_daemon::finalize::{Clock, ClockSample, SystemFinalizer};
 use aura_daemon::lifecycle::{Finalizer, Heartbeat, Notification};
 
 use support::system_sources::SOURCE_CAPABILITIES;
+#[cfg(target_os = "linux")]
+use support::transaction::mid_scan_failure_lifecycle;
 use support::transaction::{
     allocation_lifecycle, assert_archive_eq, assert_baselines_advanced_once, assert_fixed_state_eq,
     lifecycle, Failure,
@@ -150,7 +152,7 @@ fn cpu_core_cap_path_has_no_post_warmup_warning_state() {
 fn collection_sample_finalizes_staging_without_advancing_committed_state() {
     let mut state = aura_daemon::collectors::CollectorState::new();
     aura_daemon::collectors::init(&mut state).expect("initialize collectors");
-    let committed_before = *state.committed();
+    let committed_before = state.committed().clone();
     let sample = aura_daemon::collectors::collect_sample(&mut state).expect("collect sample");
     assert_eq!(sample.archive.version, ARCHIVE_VERSION);
     assert_eq!(sample.archive.checksum, sample.archive.calculate_checksum());
@@ -231,7 +233,7 @@ fn invalid_clock_sample_leaves_staging_unchanged() {
 #[test]
 fn collector_failure_preserves_committed_state_and_publication() {
     let mut lifecycle = lifecycle(Failure::Collector, None);
-    let committed_before = *lifecycle.state().committed();
+    let committed_before = lifecycle.state().committed().clone();
     let published_before = lifecycle.publisher().published();
     let shm_before = lifecycle.publisher().raw_bytes();
     let error = lifecycle.cycle().expect_err("collector failure");
@@ -243,9 +245,36 @@ fn collector_failure_preserves_committed_state_and_publication() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn mid_scan_directory_failure_commits_no_process_generation_or_rehash() {
+    let mut lifecycle = mid_scan_failure_lifecycle();
+    let committed_before = lifecycle.state().committed().clone();
+    let generation_before = committed_before.baselines.process.generation();
+
+    let error = lifecycle.cycle().expect_err("mid-scan directory failure");
+
+    assert!(matches!(error, AuraError::Fatal(_)));
+    assert_fixed_state_eq(lifecycle.state().committed(), &committed_before);
+    assert_eq!(
+        lifecycle.state().committed().baselines.process.generation(),
+        generation_before
+    );
+    assert!(
+        lifecycle
+            .state()
+            .committed()
+            .baselines
+            .process
+            .get(&(7, 7))
+            .is_none(),
+        "partially observed identity was not committed"
+    );
+}
+
+#[test]
 fn finalization_failure_preserves_committed_state_and_publication() {
     let mut lifecycle = lifecycle(Failure::Finalizer, None);
-    let committed_before = *lifecycle.state().committed();
+    let committed_before = lifecycle.state().committed().clone();
     let published_before = lifecycle.publisher().published();
     let shm_before = lifecycle.publisher().raw_bytes();
     let error = lifecycle.cycle().expect_err("finalizer failure");
@@ -259,7 +288,7 @@ fn finalization_failure_preserves_committed_state_and_publication() {
 #[test]
 fn publication_failure_preserves_committed_state_and_old_bytes() {
     let mut lifecycle = lifecycle(Failure::Publisher, None);
-    let committed_before = *lifecycle.state().committed();
+    let committed_before = lifecycle.state().committed().clone();
     let published_before = lifecycle.publisher().published();
     let shm_before = lifecycle.publisher().raw_bytes();
     let error = lifecycle.cycle().expect_err("publisher failure");
@@ -273,7 +302,7 @@ fn publication_failure_preserves_committed_state_and_old_bytes() {
 #[test]
 fn ready_failure_retains_the_advanced_commit_and_published_bytes() {
     let mut lifecycle = lifecycle(Failure::None, Some(1));
-    let committed_before = *lifecycle.state().committed();
+    let committed_before = lifecycle.state().committed().clone();
     let shm_before = lifecycle.publisher().raw_bytes();
     let error = lifecycle.cycle().expect_err("READY failure");
     assert!(matches!(error, AuraError::Fatal(_)));
@@ -293,7 +322,7 @@ fn ready_failure_retains_the_advanced_commit_and_published_bytes() {
 fn watchdog_failure_retains_the_second_successful_publication() {
     let mut lifecycle = lifecycle(Failure::None, Some(2));
     lifecycle.cycle().expect("READY cycle");
-    let committed_before = *lifecycle.state().committed();
+    let committed_before = lifecycle.state().committed().clone();
     let shm_before = lifecycle.publisher().raw_bytes();
     let error = lifecycle.cycle().expect_err("WATCHDOG failure");
     assert!(matches!(error, AuraError::Fatal(_)));
@@ -324,7 +353,7 @@ fn notification_failure_exits_without_another_collection() {
 #[test]
 fn warmup_commits_without_publication_or_notification() {
     let mut lifecycle = lifecycle(Failure::None, None);
-    let committed_before = *lifecycle.state().committed();
+    let committed_before = lifecycle.state().committed().clone();
     let shm_before = lifecycle.publisher().raw_bytes();
     let heartbeat = Heartbeat::from_millis(9).expect("positive heartbeat");
     lifecycle.warm_up(heartbeat).expect("warm-up");
@@ -338,7 +367,7 @@ fn warmup_commits_without_publication_or_notification() {
 #[test]
 fn fatal_warmup_preserves_committed_state_and_does_not_sleep() {
     let mut lifecycle = lifecycle(Failure::Collector, None);
-    let committed_before = *lifecycle.state().committed();
+    let committed_before = lifecycle.state().committed().clone();
     let shm_before = lifecycle.publisher().raw_bytes();
     let heartbeat = Heartbeat::from_millis(9).expect("positive heartbeat");
     let error = lifecycle.warm_up(heartbeat).expect_err("warm-up failure");
@@ -413,7 +442,7 @@ fn warmed_production_lifecycle_has_zero_allocator_delta() {
     let calls = probe.finish();
     assert_eq!(calls, 0);
     assert_eq!(lifecycle.state().scratch_capacities(), capacities);
-    assert_eq!(lifecycle.collector().sources().calls, [3; 4]);
+    assert_eq!(lifecycle.collector().sources().calls, [3; 5]);
     assert_eq!(
         lifecycle.state().committed().archive.capabilities & SOURCE_CAPABILITIES,
         SOURCE_CAPABILITIES

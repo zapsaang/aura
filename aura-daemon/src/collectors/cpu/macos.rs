@@ -8,5 +8,6 @@ pub fn collect(_buf: &mut Vec<u8>, out: &mut CpuGlobalStat) -> AuraResult<CpuAva
     *out = cpu;
     Ok(CpuAvailability {
         context_switches: false,
+        over_capacity: false,
     })
 }

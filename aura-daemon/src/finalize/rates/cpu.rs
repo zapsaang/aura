@@ -100,18 +100,16 @@ pub(super) fn zero_process() -> aura_common::ProcessStat {
 
 pub(super) fn clear_over_cap(state: &mut FixedCollectorState) {
     let cpu = &mut state.archive.cpu;
-    let caps = state.archive.capabilities;
-    cpu.core_count = 0;
+    cpu.core_count = MAX_CORES as u8;
     for core in &mut cpu.cores {
         *core = zero_core();
     }
     state.archive.capabilities &= !CAP_CPU_PER_CORE;
-    if caps & CAP_PROCESS_TOP_CPU != 0 {
-        state.archive.process.top_cpu_count = 0;
-        for entry in &mut state.archive.process.top_cpu {
-            *entry = zero_process();
-        }
+    state.archive.process.top_cpu_count = 0;
+    for entry in &mut state.archive.process.top_cpu {
+        *entry = zero_process();
     }
+    state.archive.capabilities &= !CAP_PROCESS_TOP_CPU;
 }
 
 pub(super) fn clear_when_no_per_core(cpu: &mut aura_common::CpuGlobalStat) {

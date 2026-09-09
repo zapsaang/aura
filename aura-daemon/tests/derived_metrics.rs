@@ -389,6 +389,7 @@ fn above_max_cores_retains_aggregate_clears_per_core_and_process_top_cpu() {
     let mut state = make_state();
     state.archive.capabilities = CAP_CPU_GLOBAL | CAP_CPU_PER_CORE | CAP_PROCESS_TOP_CPU;
     state.archive.cpu.core_count = 200;
+    state.cpu_over_capacity = true;
     for i in 0..MAX_CORES {
         state.archive.cpu.cores[i] = make_core(i as u8, 100, 50, 850, 1_000);
     }
@@ -402,7 +403,7 @@ fn above_max_cores_retains_aggregate_clears_per_core_and_process_top_cpu() {
     });
     finalizer.finalize(&mut state).expect("over-core clamp");
 
-    assert_eq!(state.archive.cpu.core_count, 0);
+    assert_eq!(state.archive.cpu.core_count as usize, MAX_CORES);
     for i in 0..MAX_CORES {
         let core = &state.archive.cpu.cores[i];
         assert_eq!(core.user_ticks, 0);

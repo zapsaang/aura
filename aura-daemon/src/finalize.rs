@@ -4,8 +4,17 @@ use aura_common::{
     CAP_MEMORY_PAGE_FAULTS, CAP_MEMORY_RAM_FREE, CAP_MEMORY_RAM_TOTAL, CAP_MEMORY_RAM_USED,
     CAP_MEMORY_SWAP, CAP_META_LOAD_AVERAGE, CAP_META_OS_CODENAME, CAP_META_OS_IDENTITY,
     CAP_META_OS_VERSION, CAP_META_OS_VERSION_ID, CAP_META_TIMEZONE, CAP_META_UPTIME,
-    CAP_META_WALLCLOCK, CAP_NETWORK_BYTES, CAP_NETWORK_RATES, MAX_CORES,
+    CAP_META_WALLCLOCK, CAP_NETWORK_BYTES, CAP_NETWORK_RATES, CAP_PROCESS_BLOCKED,
+    CAP_PROCESS_RUNNING, CAP_PROCESS_SLEEPING, CAP_PROCESS_TOP_CPU, CAP_PROCESS_TOP_MEMORY,
+    CAP_PROCESS_TOTAL, MAX_CORES,
 };
+
+const PROCESS_CAPS_MASK: u64 = CAP_PROCESS_TOTAL
+    | CAP_PROCESS_RUNNING
+    | CAP_PROCESS_BLOCKED
+    | CAP_PROCESS_SLEEPING
+    | CAP_PROCESS_TOP_CPU
+    | CAP_PROCESS_TOP_MEMORY;
 
 use crate::collectors::FixedCollectorState;
 use crate::lifecycle::Finalizer;
@@ -113,7 +122,7 @@ fn zero_unowned(archive: &mut TelemetryArchive) {
             *core = zero.cpu.cores[0];
         }
     }
-    archive.process = zero.process;
+    zero_process(archive, &zero, caps);
     zero_memory(archive, &zero, caps);
     archive.storage = zero.storage;
     if caps & CAP_NETWORK_BYTES == 0 {
@@ -168,6 +177,35 @@ fn zero_gpu_records(archive: &mut TelemetryArchive, zero: &TelemetryArchive) {
                 gpu.tone = 0;
             }
         }
+    }
+}
+
+fn zero_process(archive: &mut TelemetryArchive, zero: &TelemetryArchive, caps: u64) {
+    if caps & PROCESS_CAPS_MASK == 0 {
+        archive.process = zero.process;
+        return;
+    }
+    let process = &mut archive.process;
+    let empty = &zero.process;
+    if caps & CAP_PROCESS_TOTAL == 0 {
+        process.total = empty.total;
+    }
+    if caps & CAP_PROCESS_RUNNING == 0 {
+        process.running = empty.running;
+    }
+    if caps & CAP_PROCESS_BLOCKED == 0 {
+        process.blocked = empty.blocked;
+    }
+    if caps & CAP_PROCESS_SLEEPING == 0 {
+        process.sleeping = empty.sleeping;
+    }
+    if caps & CAP_PROCESS_TOP_CPU == 0 {
+        process.top_cpu = empty.top_cpu;
+        process.top_cpu_count = 0;
+    }
+    if caps & CAP_PROCESS_TOP_MEMORY == 0 {
+        process.top_mem = empty.top_mem;
+        process.top_mem_count = 0;
     }
 }
 

@@ -5,6 +5,7 @@ pub mod memory;
 pub mod meta;
 pub mod network;
 pub mod parsing;
+pub mod process;
 mod sources;
 mod state;
 
@@ -62,6 +63,7 @@ pub fn init(state: &mut CollectorState) -> AuraResult<()> {
     {
         meta::cache_os_fingerprint(&mut fixed.archive.meta)?;
         gpu::init_nvml(&mut fixed.archive.gpu)?;
+        fixed.baselines.process_page_size = process::cache_page_size()?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -92,6 +94,7 @@ fn collect_fixed<S: CollectorSources>(
     state.archive.capabilities = 0;
 
     let cpu_availability = sources.collect_cpu(state, scratch)?;
+    state.cpu_over_capacity = cpu_availability.over_capacity;
     state.archive.capabilities |= cpu_availability.capability_mask();
 
     let memory_availability = sources.collect_memory(state, scratch)?;
@@ -111,6 +114,9 @@ fn collect_fixed<S: CollectorSources>(
 
     let network_availability = sources.collect_network(state, scratch)?;
     state.archive.capabilities |= network_availability.capability_mask();
+
+    let process_availability = sources.collect_process(state, scratch)?;
+    state.archive.capabilities |= process_availability.capability_mask();
 
     let meta_gpu_availability = sources.collect_meta_and_gpu(state)?;
     state.archive.capabilities |= meta_gpu_availability.capability_mask();

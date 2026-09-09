@@ -2,17 +2,13 @@ mod cpu;
 mod ffi;
 mod memory;
 mod metadata;
-mod process;
 
 use std::sync::OnceLock;
 
-#[cfg(target_os = "macos")]
-use std::sync::Mutex;
-
-use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats, ProcessStats};
+use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats};
 
 #[cfg(target_os = "macos")]
-use self::{ffi::MachPort, process::ProcessSnapshot};
+use self::ffi::MachPort;
 
 pub use metadata::{boot_time, cache_os_fingerprint};
 
@@ -20,7 +16,6 @@ pub trait PlatformStatsProvider: Send + Sync {
     fn name(&self) -> &'static str;
     fn cpu_stats(&self) -> AuraResult<CpuGlobalStat>;
     fn memory_stats(&self) -> AuraResult<MemoryStats>;
-    fn process_stats(&self) -> AuraResult<ProcessStats>;
 }
 
 static PROVIDER: OnceLock<Box<dyn PlatformStatsProvider>> = OnceLock::new();
@@ -43,8 +38,6 @@ pub fn provider() -> AuraResult<&'static dyn PlatformStatsProvider> {
 pub struct MacosPlatform {
     #[cfg(target_os = "macos")]
     host_port: MachPort,
-    #[cfg(target_os = "macos")]
-    process_snapshot: Mutex<ProcessSnapshot>,
 }
 
 impl MacosPlatform {
@@ -53,10 +46,7 @@ impl MacosPlatform {
         {
             // SAFETY: `mach_host_self` takes no arguments and returns the current task's host send right.
             let host_port = unsafe { ffi::mach_host_self() };
-            Ok(Self {
-                host_port,
-                process_snapshot: Mutex::new(ProcessSnapshot::default()),
-            })
+            Ok(Self { host_port })
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -94,17 +84,6 @@ impl PlatformStatsProvider for MacosPlatform {
             "macOS platform is only available on macOS targets".to_string(),
         ))
     }
-
-    fn process_stats(&self) -> AuraResult<ProcessStats> {
-        #[cfg(target_os = "macos")]
-        {
-            process::collect(self)
-        }
-        #[cfg(not(target_os = "macos"))]
-        Err(AuraError::PlatformNotSupported(
-            "macOS platform is only available on macOS targets".to_string(),
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -125,11 +104,9 @@ mod tests {
         let provider = MacosPlatform::new().expect("macos provider");
         let cpu = provider.cpu_stats().expect("cpu");
         let mem = provider.memory_stats().expect("memory");
-        let proc = provider.process_stats().expect("process");
 
         assert!(cpu.total_ticks >= cpu.idle_ticks);
         assert!(mem.ram_total >= mem.ram_free);
-        assert!(proc.total <= u32::MAX);
     }
 
     #[test]

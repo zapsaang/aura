@@ -1,5 +1,7 @@
 use aura_common::{AuraError, TelemetryArchive, MAX_CORES, PROC_BUFFER_SIZE};
 
+use super::process::state::ProcessBaseline;
+
 mod network;
 
 pub use network::{NetByteSnapshot, NetIfKey, NetIfSlot, NET_KEY_LEN, NET_MAP_CAPACITY};
@@ -51,14 +53,31 @@ impl CpuCoreSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct CollectorBaselines {
     pub cpu_ticks: CpuTickSnapshot,
     pub cores: [CpuCoreSnapshot; MAX_CORES],
     pub core_count: u8,
     pub net_bytes: NetByteSnapshot,
+    pub process: Box<ProcessBaseline>,
+    pub process_page_size: u64,
     pub prev_page_faults: u64,
     pub prev_timestamp_ns: u64,
+}
+
+impl CollectorBaselines {
+    /// Copies committed baselines into staging; the boxed process table is
+    /// memcpy'd in place so no allocation happens per cycle.
+    fn copy_from(&mut self, src: &Self) {
+        self.cpu_ticks = src.cpu_ticks;
+        self.cores = src.cores;
+        self.core_count = src.core_count;
+        self.net_bytes = src.net_bytes;
+        *self.process = *src.process;
+        self.process_page_size = src.process_page_size;
+        self.prev_page_faults = src.prev_page_faults;
+        self.prev_timestamp_ns = src.prev_timestamp_ns;
+    }
 }
 
 impl Default for CollectorBaselines {
@@ -68,16 +87,19 @@ impl Default for CollectorBaselines {
             cores: [CpuCoreSnapshot::default(); MAX_CORES],
             core_count: 0,
             net_bytes: NetByteSnapshot::zero(),
+            process: Box::new(ProcessBaseline::default()),
+            process_page_size: 0,
             prev_page_faults: 0,
             prev_timestamp_ns: 0,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct FixedCollectorState {
     pub archive: TelemetryArchive,
     pub baselines: CollectorBaselines,
+    pub cpu_over_capacity: bool,
 }
 
 impl Default for FixedCollectorState {
@@ -85,6 +107,7 @@ impl Default for FixedCollectorState {
         Self {
             archive: TelemetryArchive::zeroed(),
             baselines: CollectorBaselines::default(),
+            cpu_over_capacity: false,
         }
     }
 }
@@ -92,6 +115,7 @@ impl Default for FixedCollectorState {
 pub struct CollectorScratch {
     pub proc_buffer: Vec<u8>,
     pub aux_buffer: Vec<u8>,
+    pub process_path_buffer: Vec<u8>,
 }
 
 impl Default for CollectorScratch {
@@ -99,13 +123,14 @@ impl Default for CollectorScratch {
         Self {
             proc_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
             aux_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
+            process_path_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
         }
     }
 }
 
 pub struct CollectorState {
-    committed: FixedCollectorState,
-    staging: FixedCollectorState,
+    committed: Box<FixedCollectorState>,
+    staging: Box<FixedCollectorState>,
     scratch: CollectorScratch,
 }
 
@@ -116,22 +141,22 @@ impl CollectorState {
 
     pub fn with_committed(committed: FixedCollectorState) -> Self {
         Self {
-            committed,
-            staging: committed,
+            staging: Box::new(committed.clone()),
+            committed: Box::new(committed),
             scratch: CollectorScratch::default(),
         }
     }
 
     pub fn committed(&self) -> &FixedCollectorState {
-        &self.committed
+        self.committed.as_ref()
     }
 
     pub fn staging(&self) -> &FixedCollectorState {
-        &self.staging
+        self.staging.as_ref()
     }
 
     pub fn staging_mut(&mut self) -> &mut FixedCollectorState {
-        &mut self.staging
+        self.staging.as_mut()
     }
 
     pub fn scratch_capacities(&self) -> (usize, usize) {
@@ -142,11 +167,13 @@ impl CollectorState {
     }
 
     pub(crate) fn prepare_staging(&mut self) {
-        self.staging = self.committed;
+        self.staging.archive = self.committed.archive;
+        self.staging.baselines.copy_from(&self.committed.baselines);
+        self.staging.cpu_over_capacity = false;
     }
 
     pub(crate) fn split_staging(&mut self) -> (&mut FixedCollectorState, &mut CollectorScratch) {
-        (&mut self.staging, &mut self.scratch)
+        (self.staging.as_mut(), &mut self.scratch)
     }
 
     pub(crate) fn commit_staging(&mut self) {
