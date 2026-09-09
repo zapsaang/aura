@@ -1,22 +1,16 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(target_os = "linux")]
-use std::fs::{File, OpenOptions};
-#[cfg(target_os = "linux")]
-use std::io::{self, Write};
-
 use aura_common::{AuraError, AuraResult};
 use env_logger::{Builder, Env};
 use log::info;
-#[cfg(target_os = "linux")]
-use log::warn;
 
 use crate::collectors::{self, CollectorState, SystemCollector};
 use crate::finalize::SystemFinalizer;
 use crate::lifecycle::{
     Heartbeat, Lifecycle, LifecycleParts, Notification, Notifier, ThreadSleeper,
 };
+use crate::notify::SystemdNotifier;
 use crate::state::ShmHandle;
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -53,6 +47,7 @@ pub fn logging_filter(verbose: bool, rust_log: Option<&str>) -> &str {
 pub fn run(config: DaemonConfig) -> AuraResult<()> {
     init_logging(config.verbose);
     let heartbeat = Heartbeat::from_millis(config.heartbeat_ms)?;
+    let notifier = SystemdNotifier::from_process_environment(heartbeat)?;
     SHUTDOWN.store(false, Ordering::Release);
     install_signals(&mut PosixSignalInstaller)?;
     info!("AURA daemon starting");
@@ -68,7 +63,7 @@ pub fn run(config: DaemonConfig) -> AuraResult<()> {
         collector: SystemCollector::default(),
         finalizer: SystemFinalizer::default(),
         publisher,
-        notifier: SystemNotifier::new(),
+        notifier,
         sleeper: ThreadSleeper,
     };
     let mut lifecycle = Lifecycle::new(state, parts);
@@ -80,75 +75,6 @@ pub(crate) struct NoopNotifier;
 impl Notifier for NoopNotifier {
     fn notify(&mut self, _notification: Notification) -> AuraResult<()> {
         Ok(())
-    }
-}
-
-struct SystemNotifier {
-    #[cfg(target_os = "linux")]
-    watchdog: Option<WatchdogDevice<File>>,
-}
-
-impl SystemNotifier {
-    fn new() -> Self {
-        #[cfg(target_os = "linux")]
-        {
-            let watchdog = match OpenOptions::new().write(true).open("/dev/watchdog") {
-                Ok(file) => {
-                    info!("opened /dev/watchdog for hardware watchdog keepalive");
-                    Some(WatchdogDevice::new(file))
-                }
-                Err(error) => {
-                    warn!("could not open /dev/watchdog ({error}), watchdog disabled");
-                    None
-                }
-            };
-            Self { watchdog }
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            Self {}
-        }
-    }
-}
-
-impl Notifier for SystemNotifier {
-    fn notify(&mut self, _notification: Notification) -> AuraResult<()> {
-        #[cfg(target_os = "linux")]
-        if let Some(watchdog) = &mut self.watchdog {
-            watchdog.pet()?;
-        }
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Drop for SystemNotifier {
-    fn drop(&mut self) {
-        if let Some(watchdog) = &mut self.watchdog {
-            if watchdog.stop().is_ok() {
-                info!("sent magic close to /dev/watchdog");
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-struct WatchdogDevice<W: Write> {
-    writer: W,
-}
-
-#[cfg(target_os = "linux")]
-impl<W: Write> WatchdogDevice<W> {
-    const fn new(writer: W) -> Self {
-        Self { writer }
-    }
-
-    fn pet(&mut self) -> io::Result<()> {
-        self.writer.write_all(&[0])
-    }
-
-    fn stop(&mut self) -> io::Result<()> {
-        self.writer.write_all(b"V")
     }
 }
 
@@ -190,21 +116,5 @@ fn as_fatal(error: AuraError) -> AuraError {
     match error {
         AuraError::Fatal(_) => error,
         other => AuraError::Fatal(other.to_string()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[cfg(target_os = "linux")]
-    use super::WatchdogDevice;
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn watchdog_device_emits_pet_and_magic_close() {
-        let mut bytes = Vec::new();
-        let mut device = WatchdogDevice::new(&mut bytes);
-        device.pet().expect("pet watchdog");
-        device.stop().expect("stop watchdog");
-        assert_eq!(bytes, [0, b'V']);
     }
 }

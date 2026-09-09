@@ -75,6 +75,8 @@ aura-cli --shm-path /tmp/aura_state.dat
 
 ### Linux + systemd
 
+AURA supports systemd deployment only as a per-user service; system-wide installation is unsupported.
+
 ```bash
 # Build release
 cargo build --release --workspace

@@ -1,14 +1,17 @@
 [Unit]
 Description=AURA daemon (user telemetry producer)
 Documentation=https://github.com/zapsaang/aura
-After=default-target
+After=default.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+WatchdogSec=3s
+RuntimeDirectory=aura
+RuntimeDirectoryMode=0700
 Environment=AURA_HEARTBEAT_MS=500
-Environment=AURA_SHM_PATH=%t/aura_state.dat
 Environment=RUST_LOG=info
-ExecStart=%h/.local/bin/aura-daemon --heartbeat-ms ${AURA_HEARTBEAT_MS} --shm-path ${AURA_SHM_PATH}
+ExecStart=%h/.local/bin/aura-daemon --heartbeat-ms ${AURA_HEARTBEAT_MS}
 Restart=on-failure
 RestartSec=2
 StandardOutput=journal

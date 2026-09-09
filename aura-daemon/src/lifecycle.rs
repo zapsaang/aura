@@ -32,6 +32,7 @@ impl Heartbeat {
 pub enum Notification {
     Ready,
     Watchdog,
+    Stopping,
 }
 
 pub trait Finalizer {
@@ -117,15 +118,19 @@ where
     }
 
     pub fn run(&mut self, heartbeat: Heartbeat, shutdown: &AtomicBool) -> AuraResult<()> {
-        if shutdown.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        self.warm_up(heartbeat)?;
-        while !shutdown.load(Ordering::Acquire) {
-            self.cycle()?;
-            self.sleeper.sleep(heartbeat.duration());
-        }
-        Ok(())
+        let result = (|| {
+            if shutdown.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            self.warm_up(heartbeat)?;
+            while !shutdown.load(Ordering::Acquire) {
+                self.cycle()?;
+                self.sleeper.sleep(heartbeat.duration());
+            }
+            Ok(())
+        })();
+        let _ = self.notifier.notify(Notification::Stopping);
+        result
     }
 
     pub fn state(&self) -> &CollectorState {

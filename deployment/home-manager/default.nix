@@ -2,6 +2,8 @@
 
 let
   cfg = config.services.aura;
+  shmArgument = lib.optionalString (cfg.shmPath != null)
+    " --shm-path ${lib.escapeShellArg cfg.shmPath}";
   auraPackage = pkgs.rustPlatform.buildRustPackage {
     pname = "aura";
     version = "0.1.0";
@@ -18,9 +20,9 @@ in
       description = "AURA daemon heartbeat interval in milliseconds.";
     };
     shmPath = lib.mkOption {
-      type = lib.types.str;
-      default = "${config.xdg.runtimeDir}/aura_state.dat";
-      description = "Shared memory path used by aura-daemon.";
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Optional explicit shared memory path override for aura-daemon.";
     };
   };
 
@@ -33,8 +35,12 @@ in
         After = [ "default.target" ];
       };
       Service = {
-        Type = "simple";
-        ExecStart = "${auraPackage}/bin/aura-daemon --heartbeat-ms ${toString cfg.heartbeatMs} --shm-path ${cfg.shmPath}";
+        Type = "notify";
+        NotifyAccess = "main";
+        WatchdogSec = "3s";
+        RuntimeDirectory = "aura";
+        RuntimeDirectoryMode = "0700";
+        ExecStart = "${auraPackage}/bin/aura-daemon --heartbeat-ms ${toString cfg.heartbeatMs}${shmArgument}";
         Restart = "on-failure";
         Environment = [ "RUST_LOG=info" ];
         StandardOutput = "journal";
@@ -50,9 +56,7 @@ in
           "${auraPackage}/bin/aura-daemon"
           "--heartbeat-ms"
           (toString cfg.heartbeatMs)
-          "--shm-path"
-          cfg.shmPath
-        ];
+        ] ++ lib.optionals (cfg.shmPath != null) [ "--shm-path" cfg.shmPath ];
         RunAtLoad = true;
         KeepAlive = {};
         EnvironmentVariables = {
