@@ -8,6 +8,7 @@ pub mod parsing;
 pub mod process;
 mod sources;
 mod state;
+pub mod storage;
 
 use aura_common::{
     AuraResult, CAP_MEMORY_BUFFERS, CAP_MEMORY_CACHED, CAP_MEMORY_PAGE_FAULTS, CAP_MEMORY_RAM_FREE,
@@ -23,6 +24,7 @@ pub use state::{
     CycleCollector, FixedCollectorState, NetByteSnapshot, NetIfKey, NetIfSlot, ProviderOutcome,
     NET_KEY_LEN, NET_MAP_CAPACITY,
 };
+pub use storage::StorageAvailability;
 
 pub struct SystemCollector<S = PlatformSources> {
     sources: S,
@@ -114,6 +116,9 @@ fn collect_fixed<S: CollectorSources>(
 
     let network_availability = sources.collect_network(state, scratch)?;
     state.archive.capabilities |= network_availability.capability_mask();
+
+    let storage_availability = sources.collect_storage(state, scratch)?;
+    state.archive.capabilities |= storage_availability.capability_mask();
 
     let process_availability = sources.collect_process(state, scratch)?;
     state.archive.capabilities |= process_availability.capability_mask();

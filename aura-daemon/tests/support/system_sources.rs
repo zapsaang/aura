@@ -5,11 +5,14 @@ use aura_common::{
     CAP_META_LOAD_AVERAGE, CAP_META_OS_IDENTITY, CAP_META_OS_VERSION_ID, CAP_META_TIMEZONE,
     CAP_META_UPTIME, CAP_NETWORK_BYTES, CAP_NETWORK_RATES, CAP_PROCESS_BLOCKED,
     CAP_PROCESS_RUNNING, CAP_PROCESS_SLEEPING, CAP_PROCESS_TOP_CPU, CAP_PROCESS_TOP_MEMORY,
-    CAP_PROCESS_TOTAL, MAX_NETIFS,
+    CAP_PROCESS_TOTAL, CAP_STORAGE_DISK_BYTES, CAP_STORAGE_DISK_IOPS, CAP_STORAGE_DISK_LATENCY,
+    CAP_STORAGE_DISK_QUEUE_DEPTH, CAP_STORAGE_DISK_RATES, CAP_STORAGE_MOUNTS, MAX_NETIFS,
 };
 use aura_daemon::collectors::cpu::CpuAvailability;
 use aura_daemon::collectors::memory::MemoryAvailability;
 use aura_daemon::collectors::process::ProcessAvailability;
+use aura_daemon::collectors::storage::state::DiskRawSnapshot;
+use aura_daemon::collectors::storage::StorageAvailability;
 use aura_daemon::collectors::{
     CollectorScratch, CollectorSources, FixedCollectorState, MetaGpuAvailability,
     NetworkAvailability,
@@ -25,6 +28,12 @@ pub const SOURCE_CAPABILITIES: u64 = CAP_CPU_GLOBAL
     | CAP_MEMORY_CACHED
     | CAP_MEMORY_SWAP
     | CAP_MEMORY_PAGE_FAULTS
+    | CAP_STORAGE_DISK_BYTES
+    | CAP_STORAGE_DISK_RATES
+    | CAP_STORAGE_DISK_IOPS
+    | CAP_STORAGE_DISK_QUEUE_DEPTH
+    | CAP_STORAGE_DISK_LATENCY
+    | CAP_STORAGE_MOUNTS
     | CAP_NETWORK_BYTES
     | CAP_NETWORK_RATES
     | CAP_PROCESS_TOTAL
@@ -42,7 +51,7 @@ pub const SOURCE_CAPABILITIES: u64 = CAP_CPU_GLOBAL
 
 #[derive(Default)]
 pub struct DeterministicSources {
-    pub calls: [usize; 5],
+    pub calls: [usize; 6],
     pub over_capacity_cpu_fixture: bool,
     sample: u64,
 }
@@ -138,6 +147,66 @@ impl CollectorSources for DeterministicSources {
         Ok(ProcessAvailability {
             running: true,
             total: true,
+        })
+    }
+
+    fn collect_storage(
+        &mut self,
+        state: &mut FixedCollectorState,
+        _scratch: &mut CollectorScratch,
+    ) -> AuraResult<StorageAvailability> {
+        self.calls[5] += 1;
+        let step = self.sample;
+        let storage = &mut state.archive.storage;
+        storage.disk_count = 2;
+        storage.disk_truncated = 0;
+
+        let sda_read_sectors = 2_000 + step * 100;
+        let sda_write_sectors = 1_000 + step * 50;
+        storage.disks[0].name = FixedString16::from_bytes(b"sda");
+        storage.disks[0].major = 8;
+        storage.disks[0].minor = 0;
+        storage.disks[0].read_bytes = sda_read_sectors * 512;
+        storage.disks[0].write_bytes = sda_write_sectors * 512;
+        storage.disks[0].queue_depth = 3;
+        state.disk_raw[0] = DiskRawSnapshot {
+            sectors_read: sda_read_sectors,
+            sectors_written: sda_write_sectors,
+            reads_completed: 100 + step * 10,
+            read_ms: 40 + step * 4,
+            writes_completed: 50 + step * 5,
+            write_ms: 20 + step * 2,
+        };
+
+        let nvme_read_sectors = 4_000 + step * 200;
+        let nvme_write_sectors = 2_000 + step * 100;
+        storage.disks[1].name = FixedString16::from_bytes(b"nvme0n1");
+        storage.disks[1].major = 259;
+        storage.disks[1].minor = 0;
+        storage.disks[1].read_bytes = nvme_read_sectors * 512;
+        storage.disks[1].write_bytes = nvme_write_sectors * 512;
+        storage.disks[1].queue_depth = 1;
+        state.disk_raw[1] = DiskRawSnapshot {
+            sectors_read: nvme_read_sectors,
+            sectors_written: nvme_write_sectors,
+            reads_completed: 200 + step * 20,
+            read_ms: 80 + step * 8,
+            writes_completed: 100 + step * 10,
+            write_ms: 40 + step * 4,
+        };
+
+        storage.mount_count = 1;
+        storage.mount_truncated = 0;
+        storage.mounts[0].mountpoint[0] = b'/';
+        storage.mounts[0].fstype = FixedString16::from_bytes(b"ext4");
+        storage.mounts[0].total = 4_096_000;
+        storage.mounts[0].available = 2_048_000;
+        storage.mounts[0].used = 1_638_400;
+        storage.mounts[0].percent = 40.0;
+
+        Ok(StorageAvailability {
+            disk_metrics: true,
+            mounts: true,
         })
     }
 

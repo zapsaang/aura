@@ -116,11 +116,13 @@ fn c_string_literal_syntax_is_not_used() {
     assert_absent("c\"");
 }
 
+#[allow(clippy::assertions_on_constants)]
 #[test]
 fn target_is_little_endian() {
     assert!(cfg!(target_endian = "little"));
 }
 
+#[allow(clippy::assertions_on_constants)]
 #[test]
 fn target_has_native_64_bit_atomics() {
     assert!(cfg!(target_has_atomic = "64"));

@@ -442,7 +442,7 @@ fn warmed_production_lifecycle_has_zero_allocator_delta() {
     let calls = probe.finish();
     assert_eq!(calls, 0);
     assert_eq!(lifecycle.state().scratch_capacities(), capacities);
-    assert_eq!(lifecycle.collector().sources().calls, [3; 5]);
+    assert_eq!(lifecycle.collector().sources().calls, [3; 6]);
     assert_eq!(
         lifecycle.state().committed().archive.capabilities & SOURCE_CAPABILITIES,
         SOURCE_CAPABILITIES

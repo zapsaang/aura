@@ -360,6 +360,8 @@ pub fn assert_fixed_state_eq(actual: &FixedCollectorState, expected: &FixedColle
     );
     assert_eq!(actual.net_bytes.slots, expected.net_bytes.slots);
     assert_eq!(actual.net_bytes.represented, expected.net_bytes.represented);
+    assert_eq!(actual.disk.slots, expected.disk.slots);
+    assert_eq!(actual.disk.generation, expected.disk.generation);
     assert_eq!(actual.core_count, expected.core_count);
     for (actual_core, expected_core) in actual.cores.iter().zip(expected.cores.iter()) {
         assert_eq!(actual_core.user, expected_core.user);

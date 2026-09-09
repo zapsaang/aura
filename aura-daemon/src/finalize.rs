@@ -124,7 +124,7 @@ fn zero_unowned(archive: &mut TelemetryArchive) {
     }
     zero_process(archive, &zero, caps);
     zero_memory(archive, &zero, caps);
-    archive.storage = zero.storage;
+    rates::zero_unowned_storage(archive, &zero, caps);
     if caps & CAP_NETWORK_BYTES == 0 {
         archive.network = zero.network;
     } else if caps & CAP_NETWORK_RATES == 0 {

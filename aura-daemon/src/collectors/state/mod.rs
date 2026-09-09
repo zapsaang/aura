@@ -1,6 +1,7 @@
-use aura_common::{AuraError, TelemetryArchive, MAX_CORES, PROC_BUFFER_SIZE};
+use aura_common::{AuraError, TelemetryArchive, MAX_CORES, MAX_DISKS, PROC_BUFFER_SIZE};
 
 use super::process::state::ProcessBaseline;
+use super::storage::state::{DiskBaselineMap, DiskRawSnapshot};
 
 mod network;
 
@@ -59,6 +60,7 @@ pub struct CollectorBaselines {
     pub cores: [CpuCoreSnapshot; MAX_CORES],
     pub core_count: u8,
     pub net_bytes: NetByteSnapshot,
+    pub disk: DiskBaselineMap,
     pub process: Box<ProcessBaseline>,
     pub process_page_size: u64,
     pub prev_page_faults: u64,
@@ -73,6 +75,7 @@ impl CollectorBaselines {
         self.cores = src.cores;
         self.core_count = src.core_count;
         self.net_bytes = src.net_bytes;
+        self.disk = src.disk;
         *self.process = *src.process;
         self.process_page_size = src.process_page_size;
         self.prev_page_faults = src.prev_page_faults;
@@ -87,6 +90,7 @@ impl Default for CollectorBaselines {
             cores: [CpuCoreSnapshot::default(); MAX_CORES],
             core_count: 0,
             net_bytes: NetByteSnapshot::zero(),
+            disk: DiskBaselineMap::zero(),
             process: Box::new(ProcessBaseline::default()),
             process_page_size: 0,
             prev_page_faults: 0,
@@ -100,6 +104,9 @@ pub struct FixedCollectorState {
     pub archive: TelemetryArchive,
     pub baselines: CollectorBaselines,
     pub cpu_over_capacity: bool,
+    /// Raw disk counters for the current cycle, aligned with
+    /// `archive.storage.disks`; consumed by the finalize rate pass.
+    pub disk_raw: [DiskRawSnapshot; MAX_DISKS],
 }
 
 impl Default for FixedCollectorState {
@@ -108,14 +115,21 @@ impl Default for FixedCollectorState {
             archive: TelemetryArchive::zeroed(),
             baselines: CollectorBaselines::default(),
             cpu_over_capacity: false,
+            disk_raw: [DiskRawSnapshot::zero(); MAX_DISKS],
         }
     }
 }
+
+/// Storage scratch covers both `/proc/diskstats` and `/proc/self/mountinfo`
+/// sequentially; it is sized once so mount-heavy systems never trigger a
+/// mid-cycle allocation.
+pub const STORAGE_BUFFER_SIZE: usize = 1024 * 1024;
 
 pub struct CollectorScratch {
     pub proc_buffer: Vec<u8>,
     pub aux_buffer: Vec<u8>,
     pub process_path_buffer: Vec<u8>,
+    pub storage_buffer: Vec<u8>,
 }
 
 impl Default for CollectorScratch {
@@ -124,6 +138,7 @@ impl Default for CollectorScratch {
             proc_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
             aux_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
             process_path_buffer: Vec::with_capacity(PROC_BUFFER_SIZE),
+            storage_buffer: Vec::with_capacity(STORAGE_BUFFER_SIZE),
         }
     }
 }

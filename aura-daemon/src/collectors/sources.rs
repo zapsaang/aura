@@ -5,6 +5,7 @@ use aura_common::{
 };
 
 use super::process::{self, ProcessAvailability};
+use super::storage::StorageAvailability;
 use super::{cpu, memory, network, CollectorScratch, FixedCollectorState};
 #[cfg(target_os = "linux")]
 use super::{gpu, meta};
@@ -82,6 +83,12 @@ pub trait CollectorSources {
         scratch: &mut CollectorScratch,
     ) -> AuraResult<NetworkAvailability>;
 
+    fn collect_storage(
+        &mut self,
+        state: &mut FixedCollectorState,
+        scratch: &mut CollectorScratch,
+    ) -> AuraResult<StorageAvailability>;
+
     fn collect_process(
         &mut self,
         state: &mut FixedCollectorState,
@@ -128,6 +135,34 @@ impl CollectorSources for PlatformSources {
             bytes: cfg!(target_os = "linux"),
             rates: cfg!(target_os = "linux"),
         })
+    }
+
+    fn collect_storage(
+        &mut self,
+        state: &mut FixedCollectorState,
+        scratch: &mut CollectorScratch,
+    ) -> AuraResult<StorageAvailability> {
+        #[cfg(target_os = "linux")]
+        {
+            super::storage::linux::collect(
+                &mut scratch.storage_buffer,
+                &mut state.archive.storage,
+                &mut state.disk_raw,
+            )?;
+            Ok(StorageAvailability {
+                disk_metrics: true,
+                mounts: true,
+            })
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = scratch;
+            super::storage::collect_mounts(&mut state.archive.storage)?;
+            Ok(StorageAvailability {
+                disk_metrics: false,
+                mounts: true,
+            })
+        }
     }
 
     fn collect_process(

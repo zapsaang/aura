@@ -7,7 +7,10 @@ mod cpu;
 mod derived;
 mod memory;
 mod network;
+mod storage;
 mod tone;
+
+pub(super) use storage::zero_unowned as zero_unowned_storage;
 
 pub(super) fn apply(state: &mut FixedCollectorState, now: u64) {
     let previous_time = state.baselines.prev_timestamp_ns;
@@ -17,6 +20,7 @@ pub(super) fn apply(state: &mut FixedCollectorState, now: u64) {
     cpu::finalize(state, elapsed, warmed);
     memory::finalize(state, elapsed, warmed);
     network::finalize(state, elapsed, warmed);
+    storage::finalize(state, elapsed, warmed);
     derived::finalize(state);
     tone::finalize(state);
     core_clamp::finalize(state);
