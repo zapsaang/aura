@@ -14,7 +14,12 @@ pub(super) fn finalize(state: &mut FixedCollectorState, elapsed: f64, warmed: bo
 
     for index in 0..represented {
         let interface = &mut network.interfaces[index];
-        let key = NetIfKey::from_name_bytes(&interface.name);
+        let staged_key = state.net_keys[index];
+        let key = if staged_key.is_empty() {
+            NetIfKey::from_name_bytes(&interface.name)
+        } else {
+            staged_key
+        };
         let previous = if warmed && allow_rates {
             state.baselines.net_bytes.get(&key).copied()
         } else {

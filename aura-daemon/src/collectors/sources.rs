@@ -130,11 +130,19 @@ impl CollectorSources for PlatformSources {
         state: &mut FixedCollectorState,
         scratch: &mut CollectorScratch,
     ) -> AuraResult<NetworkAvailability> {
-        network::collect(&mut scratch.proc_buffer, &mut state.archive.network)?;
-        Ok(NetworkAvailability {
-            bytes: cfg!(target_os = "linux"),
-            rates: cfg!(target_os = "linux"),
-        })
+        #[cfg(target_os = "linux")]
+        {
+            network::collect(&mut scratch.proc_buffer, &mut state.archive.network)?;
+            Ok(NetworkAvailability {
+                bytes: true,
+                rates: true,
+            })
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = scratch;
+            network::macos::collect_with_keys(&mut state.archive.network, &mut state.net_keys)
+        }
     }
 
     fn collect_storage(

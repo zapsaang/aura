@@ -1,33 +1,28 @@
-use std::mem::MaybeUninit;
 use std::process::Command;
 
 use aura_common::{AuraError, AuraResult, FixedString16, MetaStats, OsFingerprint};
 
+use crate::collectors::memory::macos::{
+    parse_timeval, MacosMemoryProbe, KERN_BOOTTIME_LEN, SYSCTL_KERN_BOOTTIME,
+};
+
 pub fn boot_time() -> AuraResult<u64> {
-    let mut mib = [libc::CTL_KERN, libc::KERN_BOOTTIME];
-    let mut boot_time_val = MaybeUninit::<libc::timeval>::uninit();
-    let mut size = std::mem::size_of::<libc::timeval>();
-    // SAFETY: `mib` names `kern.boottime`, `boot_time_val` is valid writable timeval storage, and `size` matches that type.
-    let ret = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            mib.len() as libc::c_uint,
-            boot_time_val.as_mut_ptr() as *mut _,
-            &mut size,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if ret != 0 {
-        return Err(AuraError::PlatformNotSupported(
-            "sysctl kern.boottime failed".into(),
-        ));
+    let mut host = super::host()?;
+    let mut buf = [0u8; KERN_BOOTTIME_LEN];
+    let read = host
+        .sysctlbyname(SYSCTL_KERN_BOOTTIME, &mut buf)
+        .map_err(|code| {
+            AuraError::Fatal(format!("sysctlbyname kern.boottime failed: errno {code}"))
+        })?;
+    if read != KERN_BOOTTIME_LEN {
+        return Err(AuraError::Fatal(format!(
+            "sysctlbyname kern.boottime size mismatch: {read} bytes"
+        )));
     }
-    // SAFETY: `sysctl` returned success, so `boot_time_val` was initialized by the kernel.
-    let bt = unsafe { boot_time_val.assume_init() };
+    let (boot_sec, _) = parse_timeval(&buf)?;
     // SAFETY: `time` permits a null output pointer when only the return value is needed.
     let now = unsafe { libc::time(std::ptr::null_mut()) };
-    Ok(now.saturating_sub(bt.tv_sec) as u64)
+    Ok(now.saturating_sub(boot_sec) as u64)
 }
 
 pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {

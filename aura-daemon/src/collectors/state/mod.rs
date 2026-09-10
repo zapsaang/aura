@@ -1,4 +1,6 @@
-use aura_common::{AuraError, TelemetryArchive, MAX_CORES, MAX_DISKS, PROC_BUFFER_SIZE};
+use aura_common::{
+    AuraError, TelemetryArchive, MAX_CORES, MAX_DISKS, MAX_NETIFS, PROC_BUFFER_SIZE,
+};
 
 use super::process::state::ProcessBaseline;
 use super::storage::state::{DiskBaselineMap, DiskRawSnapshot};
@@ -107,6 +109,11 @@ pub struct FixedCollectorState {
     /// Raw disk counters for the current cycle, aligned with
     /// `archive.storage.disks`; consumed by the finalize rate pass.
     pub disk_raw: [DiskRawSnapshot; MAX_DISKS],
+    /// Per-cycle network identity keys aligned with
+    /// `archive.network.interfaces`; macOS fills (sdl_index, name) keys,
+    /// other producers leave them empty so the finalize pass derives the
+    /// legacy name-only key.
+    pub net_keys: [NetIfKey; MAX_NETIFS],
 }
 
 impl Default for FixedCollectorState {
@@ -116,6 +123,7 @@ impl Default for FixedCollectorState {
             baselines: CollectorBaselines::default(),
             cpu_over_capacity: false,
             disk_raw: [DiskRawSnapshot::zero(); MAX_DISKS],
+            net_keys: [NetIfKey::empty(); MAX_NETIFS],
         }
     }
 }

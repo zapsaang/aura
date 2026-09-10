@@ -1,123 +1,101 @@
-mod cpu;
 mod ffi;
-mod memory;
+mod host;
 mod metadata;
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
-use aura_common::{AuraError, AuraResult, CpuGlobalStat, MemoryStats};
-
-#[cfg(target_os = "macos")]
-use self::ffi::MachPort;
+use aura_common::{AuraError, AuraResult};
 
 pub use metadata::{boot_time, cache_os_fingerprint};
 
-pub trait PlatformStatsProvider: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn cpu_stats(&self) -> AuraResult<CpuGlobalStat>;
-    fn memory_stats(&self) -> AuraResult<MemoryStats>;
+pub(crate) use host::MacosHost;
+
+/// Mach ports are opaque `u32` handles acquired once at daemon init and
+/// never fabricated: init fails Fatally when either selector returns
+/// MACH_PORT_NULL. The host port is a task-owned send right that is not
+/// reference-counted per call; the task port is acquired exactly once for
+/// the process lifetime.
+#[derive(Clone, Copy)]
+pub(crate) struct MacPorts {
+    host: ffi::MachPort,
+    task: ffi::MachPort,
+    page_size: u64,
 }
 
-static PROVIDER: OnceLock<Box<dyn PlatformStatsProvider>> = OnceLock::new();
+static PORTS: OnceLock<MacPorts> = OnceLock::new();
+/// The one fixed NET_RT_IFLIST2 routing buffer, allocated once at init
+/// from the count query plus one page (rounded up, capped at 1 MiB) and
+/// reused at its exact capacity every cycle without growth.
+static IFLIST2: OnceLock<Mutex<Vec<u8>>> = OnceLock::new();
 
-pub fn init() -> AuraResult<&'static dyn PlatformStatsProvider> {
-    if PROVIDER.get().is_none() {
-        let provider: Box<dyn PlatformStatsProvider> = Box::new(MacosPlatform::new()?);
-        let _ = PROVIDER.set(provider);
-    }
-    provider()
-}
-
-pub fn provider() -> AuraResult<&'static dyn PlatformStatsProvider> {
-    PROVIDER.get().map(|p| p.as_ref()).ok_or_else(|| {
-        AuraError::PlatformNotSupported("platform provider not initialized".to_string())
-    })
-}
-
-#[derive(Debug)]
-pub struct MacosPlatform {
-    #[cfg(target_os = "macos")]
-    host_port: MachPort,
-}
-
-impl MacosPlatform {
-    pub fn new() -> AuraResult<Self> {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: `mach_host_self` takes no arguments and returns the current task's host send right.
-            let host_port = unsafe { ffi::mach_host_self() };
-            Ok(Self { host_port })
+pub fn init() -> AuraResult<()> {
+    if PORTS.get().is_none() {
+        // SAFETY: both selectors take no arguments and return the calling
+        // task's ports.
+        let host = unsafe { ffi::mach_host_self() };
+        if host == 0 {
+            return Err(AuraError::Fatal(
+                "mach_host_self returned a null port".to_string(),
+            ));
         }
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            Err(AuraError::PlatformNotSupported(
-                "macOS platform is only available on macOS targets".to_string(),
-            ))
+        // SAFETY: see above.
+        let task = unsafe { ffi::mach_task_self() };
+        if task == 0 {
+            return Err(AuraError::Fatal(
+                "mach_task_self returned a null port".to_string(),
+            ));
         }
+        // SAFETY: `_SC_PAGESIZE` is a supported sysconf name.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if page_size <= 0 {
+            return Err(AuraError::Fatal(format!(
+                "sysconf(_SC_PAGESIZE) failed: {page_size}"
+            )));
+        }
+        let buffer = crate::collectors::network::macos::init_iflist2_buffer(
+            iflist2_count_query(),
+            page_size as usize,
+        )?;
+        let _ = IFLIST2.set(Mutex::new(buffer));
+        let _ = PORTS.set(MacPorts {
+            host,
+            task,
+            page_size: page_size as u64,
+        });
     }
+    Ok(())
 }
 
-impl PlatformStatsProvider for MacosPlatform {
-    fn name(&self) -> &'static str {
-        "macos"
+fn iflist2_count_query() -> Result<usize, i32> {
+    let mib = [ffi::CTL_NET, ffi::PF_ROUTE, 0, 0, ffi::NET_RT_IFLIST2, 0];
+    let mut needed: libc::size_t = 0;
+    // SAFETY: a null oldp requests the required byte count without writing
+    // any routing data.
+    let ret = unsafe {
+        ffi::sysctl(
+            mib.as_ptr(),
+            mib.len() as libc::c_uint,
+            std::ptr::null_mut(),
+            &mut needed,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret != 0 {
+        return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(-1));
     }
-
-    fn cpu_stats(&self) -> AuraResult<CpuGlobalStat> {
-        #[cfg(target_os = "macos")]
-        {
-            cpu::collect(self)
-        }
-        #[cfg(not(target_os = "macos"))]
-        Err(AuraError::PlatformNotSupported(
-            "macOS platform is only available on macOS targets".to_string(),
-        ))
-    }
-
-    fn memory_stats(&self) -> AuraResult<MemoryStats> {
-        #[cfg(target_os = "macos")]
-        {
-            memory::collect(self)
-        }
-        #[cfg(not(target_os = "macos"))]
-        Err(AuraError::PlatformNotSupported(
-            "macOS platform is only available on macOS targets".to_string(),
-        ))
-    }
+    Ok(needed)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{MacosPlatform, PlatformStatsProvider};
-
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn constructor_is_unsupported_off_macos() {
-        let err = MacosPlatform::new().expect_err("expected unsupported platform error");
-        let msg = err.to_string();
-        assert!(msg.contains("macOS platform is only available"));
-    }
-
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn stub_collectors_return_structs() {
-        let provider = MacosPlatform::new().expect("macos provider");
-        let cpu = provider.cpu_stats().expect("cpu");
-        let mem = provider.memory_stats().expect("memory");
-
-        assert!(cpu.total_ticks >= cpu.idle_ticks);
-        assert!(mem.ram_total >= mem.ram_free);
-    }
-
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn init_then_provider_returns_same_instance() {
-        let p1 = crate::platform::macos::init().expect("init should succeed");
-        let p2 = crate::platform::macos::provider().expect("provider should return Ok after init");
-
-        assert!(
-            std::ptr::eq(p1 as *const _, p2 as *const _),
-            "provider() should return the same instance initialized by init()"
-        );
-    }
+pub(crate) fn host() -> AuraResult<MacosHost> {
+    let ports = PORTS.get().ok_or_else(|| {
+        AuraError::Fatal("macOS platform host ports are not initialized".to_string())
+    })?;
+    let buffer = IFLIST2.get().ok_or_else(|| {
+        AuraError::Fatal("macOS network routing buffer is not initialized".to_string())
+    })?;
+    let guard = buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Ok(MacosHost::new(*ports, guard))
 }
