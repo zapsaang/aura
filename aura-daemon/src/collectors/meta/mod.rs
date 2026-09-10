@@ -1,26 +1,102 @@
+pub mod linux;
+pub mod macos;
+
 use std::fs::File;
 use std::io::Read;
 
-use aura_common::{AuraResult, FixedString16, MetaStats, OsFingerprint};
+use aura_common::{
+    AuraResult, FixedString16, MetaStats, OsFingerprint, CAP_GPU_ENUMERATION,
+    CAP_META_LOAD_AVERAGE, CAP_META_OS_CODENAME, CAP_META_OS_IDENTITY, CAP_META_OS_VERSION,
+    CAP_META_OS_VERSION_ID, CAP_META_TIMEZONE, CAP_META_UPTIME,
+};
 
-use super::parsing::{split_whitespace, trim_ascii};
+use super::parsing::split_whitespace;
 
-pub fn cache_os_fingerprint(meta: &mut MetaStats) -> AuraResult<()> {
-    let mut os = OsFingerprint {
-        os_type: FixedString16::from_bytes(b"linux"),
+#[cfg(target_os = "linux")]
+pub use linux::cache_os_fingerprint;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MetaGpuAvailability {
+    pub uptime: bool,
+    pub load_average: bool,
+    pub timezone: bool,
+    pub os_identity: bool,
+    pub os_version: bool,
+    pub os_version_id: bool,
+    pub os_codename: bool,
+    pub gpu_enumeration: bool,
+}
+
+impl MetaGpuAvailability {
+    pub(super) const fn capability_mask(self) -> u64 {
+        let mut capabilities = 0;
+        if self.uptime {
+            capabilities |= CAP_META_UPTIME;
+        }
+        if self.load_average {
+            capabilities |= CAP_META_LOAD_AVERAGE;
+        }
+        if self.timezone {
+            capabilities |= CAP_META_TIMEZONE;
+        }
+        if self.os_identity {
+            capabilities |= CAP_META_OS_IDENTITY;
+        }
+        if self.os_version {
+            capabilities |= CAP_META_OS_VERSION;
+        }
+        if self.os_version_id {
+            capabilities |= CAP_META_OS_VERSION_ID;
+        }
+        if self.os_codename {
+            capabilities |= CAP_META_OS_CODENAME;
+        }
+        if self.gpu_enumeration {
+            capabilities |= CAP_GPU_ENUMERATION;
+        }
+        capabilities
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OsAvailability {
+    pub identity: bool,
+    pub version: bool,
+    pub version_id: bool,
+    pub codename: bool,
+}
+
+/// Derive the per-cycle bit 27..30 state from the init-time cached
+/// fingerprint. The cache maintains the all-or-nothing identity-triple
+/// invariant, so a non-empty `os_id` implies valid type/id/pretty.
+pub fn cached_os_availability(os: &OsFingerprint) -> OsAvailability {
+    OsAvailability {
+        identity: os.os_id.bytes[0] != 0,
+        version: os.version[0] != 0,
+        version_id: os.os_version_id.bytes[0] != 0,
+        codename: os.version_codename.bytes[0] != 0,
+    }
+}
+
+pub(crate) fn empty_fingerprint() -> OsFingerprint {
+    OsFingerprint {
+        os_type: FixedString16::new(),
         os_id: FixedString16::new(),
         os_version_id: FixedString16::new(),
         version_codename: FixedString16::new(),
         version: [0; 64],
         os_pretty_name: [0; 128],
-    };
-
-    if let Ok(buf) = std::fs::read("/etc/os-release") {
-        parse_os_release(&buf, &mut os);
     }
+}
 
-    meta.os = os;
-    Ok(())
+/// Copy `src` into `dest`, truncating at the last UTF-8 boundary that fits.
+pub(crate) fn copy_text_truncated(dest: &mut [u8], src: &[u8]) {
+    let end = src.len().min(dest.len());
+    let valid = match std::str::from_utf8(&src[..end]) {
+        Ok(_) => end,
+        Err(error) => error.valid_up_to(),
+    };
+    dest[..valid].copy_from_slice(&src[..valid]);
 }
 
 pub fn collect(meta: &mut MetaStats) -> AuraResult<()> {
@@ -43,34 +119,6 @@ pub fn collect(meta: &mut MetaStats) -> AuraResult<()> {
     meta.timezone_offset_secs = offset_secs;
 
     Ok(())
-}
-
-pub fn parse_os_release(buf: &[u8], out: &mut OsFingerprint) {
-    let mut line_start = 0usize;
-    for i in 0..=buf.len() {
-        if i < buf.len() && buf[i] != b'\n' {
-            continue;
-        }
-        let line = &buf[line_start..i];
-        line_start = i + 1;
-        if line.is_empty() {
-            continue;
-        }
-        let Some(eq) = line.iter().position(|&c| c == b'=') else {
-            continue;
-        };
-        let key = &line[..eq];
-        let val = trim_quote(trim_ascii(&line[eq + 1..]));
-
-        if key == b"ID" {
-            out.os_id = FixedString16::from_bytes(val);
-        } else if key == b"VERSION_ID" {
-            out.os_version_id = FixedString16::from_bytes(val);
-        } else if key == b"PRETTY_NAME" {
-            let n = val.len().min(128);
-            out.os_pretty_name[..n].copy_from_slice(&val[..n]);
-        }
-    }
 }
 
 fn parse_loadavg(buf: &[u8], meta: &mut MetaStats) {
@@ -132,14 +180,6 @@ fn parse_first_f64_to_u64(b: &[u8]) -> u64 {
     int
 }
 
-fn trim_quote(b: &[u8]) -> &[u8] {
-    if b.len() >= 2 && b[0] == b'"' && b[b.len() - 1] == b'"' {
-        &b[1..b.len() - 1]
-    } else {
-        b
-    }
-}
-
 fn timezone_info() -> ([u8; 8], i32) {
     let mut out = [0u8; 8];
     let mut offset = 0i32;
@@ -165,27 +205,4 @@ fn timezone_info() -> ([u8; 8], i32) {
     }
 
     (out, offset)
-}
-
-#[cfg(test)]
-mod tests {
-    use aura_common::{FixedString16, OsFingerprint};
-
-    use super::parse_os_release;
-
-    #[test]
-    fn parse_os_release_sample() {
-        let fixture = include_bytes!("../../tests/fixtures/etc_os_release_sample.txt");
-        let mut os = OsFingerprint {
-            os_type: FixedString16::new(),
-            os_id: FixedString16::new(),
-            os_version_id: FixedString16::new(),
-            version_codename: FixedString16::new(),
-            version: [0; 64],
-            os_pretty_name: [0; 128],
-        };
-        parse_os_release(fixture, &mut os);
-        assert_eq!(os.os_id.as_str(), "ubuntu");
-        assert_eq!(os.os_version_id.as_str(), "22.04");
-    }
 }

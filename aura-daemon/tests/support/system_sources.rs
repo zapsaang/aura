@@ -231,7 +231,9 @@ impl CollectorSources for DeterministicSources {
             load_average: true,
             timezone: true,
             os_identity: true,
+            os_version: false,
             os_version_id: true,
+            os_codename: false,
             gpu_enumeration: true,
         })
     }

@@ -907,7 +907,9 @@ impl CollectorSources for MacosShapedSources {
             load_average: false,
             timezone: false,
             os_identity: false,
+            os_version: false,
             os_version_id: false,
+            os_codename: false,
             gpu_enumeration: false,
         })
     }

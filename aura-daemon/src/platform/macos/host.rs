@@ -2,6 +2,7 @@ use std::sync::MutexGuard;
 
 use crate::collectors::cpu::macos::MacosCpuProbe;
 use crate::collectors::memory::macos::MacosMemoryProbe;
+use crate::collectors::meta::macos::MacosMetaProbe;
 use crate::collectors::network::macos::MacosNetworkProbe;
 
 use super::ffi;
@@ -49,6 +50,30 @@ impl Drop for MachInfo {
 
 fn errno() -> i32 {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
+}
+
+fn sysctlbyname_raw(name: &[u8], out: &mut [u8]) -> Result<usize, i32> {
+    let mut cname = [0u8; 64];
+    if name.is_empty() || name.len() >= cname.len() {
+        return Err(ffi::EINVAL);
+    }
+    cname[..name.len()].copy_from_slice(name);
+    let mut size = out.len();
+    // SAFETY: `cname` is NUL-terminated, `out` is writable for `size`
+    // bytes, and no new value is written.
+    let ret = unsafe {
+        libc::sysctlbyname(
+            cname.as_ptr().cast(),
+            out.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret != 0 {
+        return Err(errno());
+    }
+    Ok(size)
 }
 
 impl MacosCpuProbe for MacosHost {
@@ -107,31 +132,17 @@ impl MacosMemoryProbe for MacosHost {
     }
 
     fn sysctlbyname(&mut self, name: &[u8], out: &mut [u8]) -> Result<usize, i32> {
-        let mut cname = [0u8; 64];
-        if name.is_empty() || name.len() >= cname.len() {
-            return Err(ffi::EINVAL);
-        }
-        cname[..name.len()].copy_from_slice(name);
-        let mut size = out.len();
-        // SAFETY: `cname` is NUL-terminated, `out` is writable for `size`
-        // bytes, and no new value is written.
-        let ret = unsafe {
-            libc::sysctlbyname(
-                cname.as_ptr().cast(),
-                out.as_mut_ptr().cast(),
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if ret != 0 {
-            return Err(errno());
-        }
-        Ok(size)
+        sysctlbyname_raw(name, out)
     }
 
     fn page_size(&self) -> u64 {
         self.ports.page_size
+    }
+}
+
+impl MacosMetaProbe for MacosHost {
+    fn sysctlbyname(&mut self, name: &[u8], out: &mut [u8]) -> Result<usize, i32> {
+        sysctlbyname_raw(name, out)
     }
 }
 

@@ -6,11 +6,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aura_cli::reader::{timestamp_is_fresh, TelemetryReader};
 use aura_common::{
-    validate_archive, write_double_buffer, AuraError, CpuCoreStat, CpuGlobalStat, DerivedStats,
-    DiskStat, FixedString16, GpuStat, GpuStats, MemoryStats, NetIfStat, NetworkStats,
+    monotonic_ns, validate_archive, write_double_buffer, AuraError, CpuCoreStat, CpuGlobalStat,
+    DerivedStats, DiskStat, FixedString16, GpuStat, GpuStats, MemoryStats, NetIfStat, NetworkStats,
     OsFingerprint, ProcessStat, ProcessStats, StorageStats, TelemetryArchive, ARCHIVE_VERSION,
-    CAP_CPU_GLOBAL, CAP_GPU_ENUMERATION, KNOWN_CAPABILITIES_MASK, MAX_CORES, MAX_DISKS, MAX_GPUS,
-    MAX_MOUNTS, MAX_NETIFS, MAX_TOP_N, SHM_SIZE, TONE_GREEN,
+    CAP_CPU_GLOBAL, CAP_GPU_ENUMERATION, CAP_META_WALLCLOCK, KNOWN_CAPABILITIES_MASK, MAX_CORES,
+    MAX_DISKS, MAX_GPUS, MAX_MOUNTS, MAX_NETIFS, MAX_TOP_N, SHM_SIZE, TONE_GREEN,
 };
 use memmap2::MmapOptions;
 
@@ -548,4 +548,136 @@ fn seqlock_torn_write_is_retried_or_rejected() {
         .expect("inactive sequence does not block read");
     assert_eq!(archive.version, ARCHIVE_VERSION);
     cleanup_shm(&path);
+}
+
+// ---------------------------------------------------------------------------
+// Todo 11 meta_: dual-clock publication and monotonic-only freshness
+// ---------------------------------------------------------------------------
+
+fn unix_now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
+}
+
+fn meta_read_and_check_fresh(archive: &TelemetryArchive, tag: &str) -> bool {
+    let path = temp_shm_path(tag);
+    write_shm(&path, archive);
+    let reader = TelemetryReader::new(&path).unwrap();
+    let snapshot = reader.read().expect("meta archive must read");
+    let fresh = reader.is_fresh(&snapshot, Duration::from_secs(2));
+    cleanup_shm(&path);
+    fresh
+}
+
+#[test]
+fn meta_wallclock_epoch_value_stays_fresh() {
+    let mut a = maximal_valid();
+    a.meta.timestamp_ns = monotonic_ns();
+    a.meta.wallclock_ns = 1;
+    assert!(meta_read_and_check_fresh(&a, "meta-wall-epoch"));
+}
+
+#[test]
+fn meta_wallclock_far_future_stays_fresh() {
+    let mut a = maximal_valid();
+    a.meta.timestamp_ns = monotonic_ns();
+    a.meta.wallclock_ns = u64::MAX;
+    assert!(meta_read_and_check_fresh(&a, "meta-wall-future"));
+}
+
+#[test]
+fn meta_stale_monotonic_is_not_fresh_despite_current_wallclock() {
+    let mut a = maximal_valid();
+    a.meta.timestamp_ns = monotonic_ns().saturating_sub(10_000_000_000);
+    a.meta.wallclock_ns = unix_now_ns();
+    assert!(!meta_read_and_check_fresh(&a, "meta-stale-mono"));
+}
+
+#[test]
+fn meta_zero_monotonic_is_offline_even_with_valid_wallclock() {
+    let mut a = minimal_valid();
+    a.capabilities = CAP_META_WALLCLOCK;
+    a.meta.timestamp_ns = 0;
+    a.meta.wallclock_ns = unix_now_ns();
+    let err = read_error(&a, "meta-zero-mono");
+    assert!(
+        matches!(err, AuraError::Offline(_)),
+        "zero monotonic timestamp must report offline, got {err:?}"
+    );
+}
+
+#[test]
+fn meta_future_monotonic_is_not_fresh() {
+    let mut a = maximal_valid();
+    a.meta.timestamp_ns = monotonic_ns().saturating_add(60_000_000_000);
+    assert!(!meta_read_and_check_fresh(&a, "meta-future-mono"));
+}
+
+#[test]
+fn meta_freshness_result_ignores_wallclock_value() {
+    let mut fresh_pair_a = maximal_valid();
+    fresh_pair_a.meta.timestamp_ns = monotonic_ns();
+    fresh_pair_a.meta.wallclock_ns = 1;
+    let mut fresh_pair_b = maximal_valid();
+    fresh_pair_b.meta.timestamp_ns = fresh_pair_a.meta.timestamp_ns;
+    fresh_pair_b.meta.wallclock_ns = unix_now_ns();
+    assert_eq!(
+        meta_read_and_check_fresh(&fresh_pair_a, "meta-ignore-wall-a"),
+        meta_read_and_check_fresh(&fresh_pair_b, "meta-ignore-wall-b")
+    );
+
+    let mut stale_pair_a = maximal_valid();
+    stale_pair_a.meta.timestamp_ns = monotonic_ns().saturating_sub(10_000_000_000);
+    stale_pair_a.meta.wallclock_ns = 1;
+    let mut stale_pair_b = stale_pair_a;
+    stale_pair_b.meta.wallclock_ns = unix_now_ns();
+    assert_eq!(
+        meta_read_and_check_fresh(&stale_pair_a, "meta-ignore-wall-c"),
+        meta_read_and_check_fresh(&stale_pair_b, "meta-ignore-wall-d")
+    );
+}
+
+#[test]
+fn meta_wallclock_unowned_must_be_zero() {
+    let mut a = minimal_valid();
+    a.meta.wallclock_ns = 5;
+    let err = read_error(&a, "meta-wall-unowned");
+    expect_invalid_archive(err, "field meta.wallclock_ns: expected zero");
+}
+
+#[test]
+fn meta_identity_capability_requires_complete_triple() {
+    let mut a = maximal_valid();
+    a.meta.os.os_pretty_name = [0; 128];
+    let err = read_error(&a, "meta-identity-triple");
+    expect_invalid_archive(
+        err,
+        "field meta.os.os_pretty_name: inconsistent with capabilities",
+    );
+}
+
+#[test]
+fn meta_identity_unowned_requires_zero_triple() {
+    let mut a = minimal_valid();
+    a.meta.os.os_id = fs16("x");
+    let err = read_error(&a, "meta-identity-unowned");
+    expect_invalid_archive(err, "field meta.os.os_id: expected zero");
+}
+
+#[test]
+fn meta_os_version_unowned_must_be_zero() {
+    let mut a = minimal_valid();
+    a.meta.os.version[0] = b'x';
+    let err = read_error(&a, "meta-version-unowned");
+    expect_invalid_archive(err, "field meta.os.version: expected zero");
+}
+
+#[test]
+fn meta_os_codename_unowned_must_be_zero() {
+    let mut a = minimal_valid();
+    a.meta.os.version_codename = fs16("x");
+    let err = read_error(&a, "meta-codename-unowned");
+    expect_invalid_archive(err, "field meta.os.version_codename: expected zero");
 }

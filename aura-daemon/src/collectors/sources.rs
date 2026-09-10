@@ -1,14 +1,12 @@
-use aura_common::{
-    AuraResult, CAP_GPU_ENUMERATION, CAP_META_LOAD_AVERAGE, CAP_META_OS_IDENTITY,
-    CAP_META_OS_VERSION_ID, CAP_META_TIMEZONE, CAP_META_UPTIME, CAP_NETWORK_BYTES,
-    CAP_NETWORK_RATES,
-};
+use aura_common::{AuraResult, CAP_NETWORK_BYTES, CAP_NETWORK_RATES};
 
+#[cfg(target_os = "linux")]
+use super::gpu;
 use super::process::{self, ProcessAvailability};
 use super::storage::StorageAvailability;
-use super::{cpu, memory, network, CollectorScratch, FixedCollectorState};
-#[cfg(target_os = "linux")]
-use super::{gpu, meta};
+use super::{cpu, memory, meta, network, CollectorScratch, FixedCollectorState};
+
+pub use super::meta::MetaGpuAvailability;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkAvailability {
@@ -24,41 +22,6 @@ impl NetworkAvailability {
         }
         if self.rates {
             capabilities |= CAP_NETWORK_RATES;
-        }
-        capabilities
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MetaGpuAvailability {
-    pub uptime: bool,
-    pub load_average: bool,
-    pub timezone: bool,
-    pub os_identity: bool,
-    pub os_version_id: bool,
-    pub gpu_enumeration: bool,
-}
-
-impl MetaGpuAvailability {
-    pub(super) const fn capability_mask(self) -> u64 {
-        let mut capabilities = 0;
-        if self.uptime {
-            capabilities |= CAP_META_UPTIME;
-        }
-        if self.load_average {
-            capabilities |= CAP_META_LOAD_AVERAGE;
-        }
-        if self.timezone {
-            capabilities |= CAP_META_TIMEZONE;
-        }
-        if self.os_identity {
-            capabilities |= CAP_META_OS_IDENTITY;
-        }
-        if self.os_version_id {
-            capabilities |= CAP_META_OS_VERSION_ID;
-        }
-        if self.gpu_enumeration {
-            capabilities |= CAP_GPU_ENUMERATION;
         }
         capabilities
     }
@@ -220,26 +183,30 @@ impl CollectorSources for PlatformSources {
         {
             meta::collect(&mut state.archive.meta)?;
             gpu::collect_nvml(&mut state.archive.gpu)?;
+            let os = meta::cached_os_availability(&state.archive.meta.os);
             Ok(MetaGpuAvailability {
                 uptime: true,
                 load_average: true,
                 timezone: true,
-                os_identity: state.archive.meta.os.os_type.bytes[0] != 0
-                    && state.archive.meta.os.os_id.bytes[0] != 0,
-                os_version_id: state.archive.meta.os.os_version_id.bytes[0] != 0,
+                os_identity: os.identity,
+                os_version: os.version,
+                os_version_id: os.version_id,
+                os_codename: os.codename,
                 gpu_enumeration: state.archive.gpu.nvml_available != 0,
             })
         }
         #[cfg(target_os = "macos")]
         {
             state.archive.meta.uptime_secs = crate::platform::macos::boot_time()?;
+            let os = meta::cached_os_availability(&state.archive.meta.os);
             Ok(MetaGpuAvailability {
                 uptime: true,
                 load_average: false,
                 timezone: false,
-                os_identity: state.archive.meta.os.os_type.bytes[0] != 0
-                    && state.archive.meta.os.os_id.bytes[0] != 0,
-                os_version_id: state.archive.meta.os.os_version_id.bytes[0] != 0,
+                os_identity: os.identity,
+                os_version: os.version,
+                os_version_id: os.version_id,
+                os_codename: os.codename,
                 gpu_enumeration: false,
             })
         }
