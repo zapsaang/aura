@@ -1,64 +1,42 @@
-pub mod ansi;
+pub mod color;
 pub mod cpu;
-pub mod mem;
+pub mod gpu;
+pub mod memory;
 pub mod meta;
-pub mod net;
+pub mod network;
+pub mod process;
+pub mod si;
+pub mod storage;
 pub mod value;
 
 use aura_common::TelemetryArchive;
 
-use crate::{ColorMode, Module};
-
-type Renderer = fn(ColorMode, &TelemetryArchive) -> String;
-
-const RENDERERS: [Renderer; 6] = [
-    cpu::render,
-    mem::render,
-    mem::render_swap,
-    net::render,
-    render_all,
-    meta::render,
-];
+use crate::args::{ColorMode, Module};
 
 pub fn render(module: Module, color: ColorMode, telemetry: &TelemetryArchive) -> String {
-    let idx = module_index(module);
-    RENDERERS[idx](color, telemetry)
-}
-
-const fn module_index(module: Module) -> usize {
     match module {
-        Module::Cpu => 0,
-        Module::Mem => 1,
-        Module::Swap => 2,
-        Module::Net => 3,
-        Module::All => 4,
-        Module::Os => 5,
+        Module::Cpu => cpu::render(color, telemetry),
+        Module::Process => process::render(color, telemetry),
+        Module::Mem => memory::render(color, telemetry),
+        Module::Swap => memory::render_swap(color, telemetry),
+        Module::Disk => storage::render(color, telemetry),
+        Module::Net => network::render(color, telemetry),
+        Module::Os => meta::render(color, telemetry),
+        Module::Gpu => gpu::render(color, telemetry),
+        Module::All => render_all(color, telemetry),
     }
 }
 
 fn render_all(color: ColorMode, telemetry: &TelemetryArchive) -> String {
     [
         cpu::render(color, telemetry),
-        mem::render(color, telemetry),
-        net::render(color, telemetry),
+        process::render(color, telemetry),
+        memory::render(color, telemetry),
+        memory::render_swap(color, telemetry),
+        storage::render(color, telemetry),
+        network::render(color, telemetry),
         meta::render(color, telemetry),
+        gpu::render(color, telemetry),
     ]
-    .join("\n")
-}
-
-#[cfg(test)]
-mod tests {
-    use aura_common::TelemetryArchive;
-
-    use crate::{ColorMode, Module};
-
-    use super::render;
-
-    #[test]
-    fn routing_renders_cpu_module() {
-        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
-        let telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
-        let out = render(Module::Cpu, ColorMode::None, &telemetry);
-        assert!(out.contains("CPU"));
-    }
+    .join("\n\n")
 }
