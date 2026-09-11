@@ -17,7 +17,7 @@ AURA 物理上分裂为两个绝对解耦的二进制可执行文件：
 
 * **核心引擎：`aura-daemon` (生产者)**
   * **运行模式**：常驻后台的独立进程。
-  * **心跳周期**：默认 500ms 唤醒一次（可通过配置文件动态调整）。
+  * **心跳周期**：默认 500ms 唤醒一次（可通过 `--heartbeat-ms` 命令行参数调整）。
    * **数据管线**：调用原生系统 API 采集数据 -> 将数据结构填充入内存 -> 使用 `bytemuck` 执行零拷贝序列化 -> 更新无锁环形缓冲区（SeqLock）的版本号 -> 进入纳秒级休眠。
   * **保活机制**：每次成功写入内存后，向内核发送 `WATCHDOG=1` 信号。若主循环阻塞超 3 秒，由系统强制猎杀并拉起。
 
@@ -68,8 +68,22 @@ AURA 采集的数据必须具备足够的工程深度，以支撑未来对底层
 
 `aura-cli` 必须提供极度克制且精确的路由系统，绝不允许出现 `grep` 过滤：
 
-* **模块化输出**：`aura-cli --module <cpu|mem|swap|disk|net|os>`，要什么给什么。
+* **模块化输出**：`aura-cli --module <cpu|process|mem|swap|disk|net|os|gpu|all>`（别名 `proc`/`memory`/`storage`/`network`/`meta`），要什么给什么。
 * **色彩引擎开关**：`aura-cli --module cpu --color <tmux|zellij|ansi|none>`，在底层完成阈值判断（如 CPU > 80% 标红）并直接输出对应 UI 框架的色彩转义码。
-* **降维兜底机制**：一旦检测到共享内存数据过期超过 2 秒，所有模块强制输出隐晦的宕机提示（如 ` ---`），绝不能抛出 Panic 堆栈破坏前端排版。
+* **降维兜底机制**：一旦检测到共享内存数据过期超过 2 秒或读取超出墙钟期限，所有模块强制输出精确的 `[AURA: OFFLINE]` 并以退出码 1 结束，绝不能抛出 Panic 堆栈破坏前端排版；损坏与安全失败以 `[AURA: ERROR - ...]` 显式区分，绝不伪装成离线。
 * **上帝视角接口**：`aura-cli --format json`，直接吐出结构化全量数据。这为你后续将数据回传给自定义 Web Dashboard 或 SSH 落地页留下了原生支持。
+
+---
+
+### 6. 补救纪要与事实标注 (Remediation Record, 2026-09)
+
+依据 `docs/design-compliance-audit-2026-08-30.md` 审计与后续补救提交，以下为带事实标注的裁决摘要；架构级锁定决策见 `docs/adr.md`，完整回归矩阵见审计报告。
+
+* **（事实：已确认并修复）AUD-001 保活**：systemd 软心跳 `WATCHDOG=1` + `WatchdogSec=3s` 已恢复，硬件 `/dev/watchdog` 直写路径已移除。
+* **（事实：已确认并修复）AUD-003 维度**：Process / Storage 曾被 `4c419fc` 移除，现已作为 ABI v2 一等维度恢复（Linux 采集 + capability 位门控）。
+* **（事实：已确认并修复）AUD-011 计算下放**：百分比、聚合与颜色 tone 全部收敛于守护进程 `DerivedStats`，CLI 仅渲染，不做浮点推导。
+* **（事实：已确认并修复）AUD-013 权限**：SHM 状态文件为 `0600`，运行目录为 euid 所有的 `0700`，CRC32 仅用于意外损坏的完整性校验，不构成认证。
+* **（事实：已确认）macOS 平台边界**：仅使用公开 API；GPU 维度在 macOS 标记为不支持（capability 位 + `N/A` 渲染），不做任何私有框架调用。
+* **（事实：已确认）Linux GPU**：NVML 改为运行时加载 `libnvidia-ml.so.1`，缺失时优雅降级；release 产物通过 `--forbid-import` 校验不含 NVML 链接依赖。
+* **（事实：文档治理已修复）AUD-014**：`.gitignore` 的 `*.md` 整类忽略已移除，文档纳入版本控制，决策记录见 `docs/adr.md`。
 
