@@ -4,11 +4,15 @@ let
   cfg = config.services.aura;
   shmArgument = lib.optionalString (cfg.shmPath != null)
     " --shm-path ${lib.escapeShellArg cfg.shmPath}";
+  workspaceManifest = builtins.fromTOML (builtins.readFile ../../Cargo.toml);
   auraPackage = pkgs.rustPlatform.buildRustPackage {
     pname = "aura";
-    version = "0.1.0";
+    version = workspaceManifest.workspace.package.version;
     src = lib.cleanSource ../../.;
     cargoLock.lockFile = ../../Cargo.lock;
+    # Linux builds enable the namespaced, dynamically loaded NVML GPU feature;
+    # Darwin builds the workspace with no extra features (no NVML on Apple).
+    buildFeatures = lib.optionals pkgs.stdenv.isLinux [ "aura-daemon/gpu-nvml" ];
   };
 in
 {

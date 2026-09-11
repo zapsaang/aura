@@ -10,7 +10,7 @@ permissions:
 jobs:
   lint:
     name: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -19,20 +19,34 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
+          toolchain: '1.85.0'
           components: rustfmt, clippy
-          extra-apt-packages: |
-            protobuf-compiler
-            libacl1-dev
 
       - name: cargo fmt (check)
         run: cargo fmt --all -- --check
 
       - name: cargo clippy (-D warnings)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+  msrv:
+    name: ubuntu-msrv
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.70.0'
+
+      - name: cargo check (MSRV 1.70, locked)
+        run: cargo +1.70.0 check --workspace --locked
 
   test-common:
     name: test-aura-common
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -40,13 +54,15 @@ jobs:
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test -p aura-common
-        run: cargo test -p aura-common
+        run: cargo test -p aura-common --locked
 
   test-daemon:
     name: test-aura-daemon
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -54,13 +70,15 @@ jobs:
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test -p aura-daemon
-        run: cargo test -p aura-daemon
+        run: cargo test -p aura-daemon --locked
 
   test-cli:
     name: test-aura-cli
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -68,13 +86,15 @@ jobs:
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test -p aura-cli
-        run: cargo test -p aura-cli
+        run: cargo test -p aura-cli --locked
 
   test-workspace:
     name: test-workspace
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -82,15 +102,17 @@ jobs:
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test --workspace
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   test-release:
     name: test-release-build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -98,15 +120,17 @@ jobs:
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test --workspace --release
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --workspace --release
+        run: cargo test --workspace --release --locked
 
   test-macos:
     name: test-macos
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -114,8 +138,13 @@ jobs:
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test --workspace
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      - name: cargo check --all-features (Darwin, locked)
+        run: cargo +1.85.0 check --workspace --all-features --locked

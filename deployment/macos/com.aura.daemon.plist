@@ -10,8 +10,6 @@
     <string>/usr/local/bin/aura-daemon</string>
     <string>--heartbeat-ms</string>
     <string>500</string>
-    <string>--shm-path</string>
-    <string>/tmp/aura_state.dat</string>
   </array>
 
   <key>RunAtLoad</key>
