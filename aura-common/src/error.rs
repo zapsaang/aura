@@ -8,13 +8,13 @@ pub enum AuraError {
     #[error("SeqLock read retry-admission deadline exhausted")]
     SeqLockTimeout,
 
-    #[error("Invalid shared memory header: active buffer index {found}")]
+    #[error("Invalid shared memory header: active buffer {found}")]
     InvalidShmHeader { found: u64 },
 
     #[error("SeqLock sequence exhausted at {sequence}")]
     SequenceExhausted { sequence: u64 },
 
-    #[error("Data checksum mismatch: expected {expected}, got {actual}")]
+    #[error("Data checksum mismatch: expected 0x{expected:08x}, got 0x{actual:08x}")]
     ChecksumMismatch { expected: u32, actual: u32 },
 
     #[error("Shared memory error: {0}")]
@@ -38,10 +38,10 @@ pub enum AuraError {
     #[error("Security validation failed: {0}")]
     Security(String),
 
-    #[error("unsupported archive version {found} (expected 2)")]
+    #[error("ABI version mismatch: expected 2, found {found}")]
     UnsupportedVersion { found: u64 },
 
-    #[error("invalid archive: {reason}")]
+    #[error("Invalid archive: {reason}")]
     InvalidArchive { reason: String },
 
     #[error("daemon is offline: {0}")]

@@ -507,10 +507,7 @@ fn wrong_shm_size_is_rejected() {
 #[test]
 fn unsupported_version_display_is_exact() {
     let err = AuraError::UnsupportedVersion { found: 1 };
-    assert_eq!(
-        err.to_string(),
-        "unsupported archive version 1 (expected 2)"
-    );
+    assert_eq!(err.to_string(), "ABI version mismatch: expected 2, found 1");
 }
 
 #[test]
@@ -520,7 +517,7 @@ fn invalid_archive_display_is_exact() {
     };
     assert_eq!(
         err.to_string(),
-        "invalid archive: field capabilities: unknown bits 0x0000000000000001"
+        "Invalid archive: field capabilities: unknown bits 0x0000000000000001"
     );
 }
 
