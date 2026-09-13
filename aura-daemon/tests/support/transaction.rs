@@ -112,7 +112,10 @@ impl MmapPublisher {
         let directory = tempfile::tempdir().expect("temporary SHM directory");
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
             .expect("private SHM directory");
-        let path = directory.path().join("state.dat");
+        // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+        let path = std::fs::canonicalize(directory.path())
+            .expect("canonical SHM directory")
+            .join("state.dat");
         let mut handle = ShmHandle::new(&path).expect("create real SHM publisher");
         handle.write(initial).expect("publish initial archive");
         Self {

@@ -21,6 +21,8 @@ time = { workspace = true }
 nvml-wrapper = { workspace = true, optional = true }
 
 [dev-dependencies]
+aura-cli = { path = "../aura-cli" }
+serde_json = { workspace = true }
 serial_test = { workspace = true }
 tempfile = { workspace = true }
 criterion = { workspace = true, features = ["html_reports"] }

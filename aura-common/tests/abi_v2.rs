@@ -477,7 +477,7 @@ fn process_trailing_top_slots_are_ignored() {
 #[test]
 fn unknown_capability_bits_reason_is_exact() {
     let mut a = minimal_valid();
-    a.capabilities = 1 << 33 | 1 << 63;
+    a.capabilities = (1 << 33) | (1 << 63);
     assert_fault(&a, "field capabilities: unknown bits 0x8000000200000000");
 }
 

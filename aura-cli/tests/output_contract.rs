@@ -1466,7 +1466,8 @@ fn temp_shm_dir(tag: &str) -> PathBuf {
         std::process::id()
     ));
     std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
-    dir
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    std::fs::canonicalize(&dir).unwrap()
 }
 
 fn write_shm(path: &Path, archive: &TelemetryArchive) {

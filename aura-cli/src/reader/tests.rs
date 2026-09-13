@@ -94,7 +94,8 @@ fn test_dir(tag: &str) -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("aura-cli-reader-{tag}-{}-{ts}", std::process::id()));
     std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
-    dir
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    std::fs::canonicalize(&dir).unwrap()
 }
 
 fn init_shm_file(path: &Path) -> memmap2::MmapMut {

@@ -34,8 +34,8 @@ pub const SEQLOCK_RETRY_ADMISSION_MS: u64 = 10;
 /// Maximum number of processes to scan (/proc/PID max)
 pub const MAX_PID: u32 = 65535;
 
-/// Page size for /proc parsing buffer
-pub const PROC_BUFFER_SIZE: usize = 4096;
+/// Fixed reusable capacity for `/proc` parsing buffers.
+pub const PROC_BUFFER_SIZE: usize = 8 * 1024;
 
 pub const MIN_DELTA_NS: u64 = 1_000_000;
 

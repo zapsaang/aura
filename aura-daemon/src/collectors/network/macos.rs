@@ -11,12 +11,16 @@ pub const RTM_IFINFO2: u8 = 18;
 pub const AF_LINK: u8 = 18;
 /// `RTA_IFP` bitmask inside `ifm_addrs` (RTAX_IFP is slot 4).
 pub const RTA_IFP: i32 = 0x10;
-/// Size of the fixed `if_msghdr2` header preceding the sockaddr chain.
-pub const IF_MSGHDR2_LEN: usize = 224;
-/// Offset of `ifm_data.ifi_ibytes` inside `if_msghdr2`.
-pub const IFM_IBYTES_OFFSET: usize = 152;
-/// Offset of `ifm_data.ifi_obytes` inside `if_msghdr2`.
-pub const IFM_OBYTES_OFFSET: usize = 160;
+/// Size of the fixed `if_msghdr2` header preceding the sockaddr chain:
+/// the 32-byte fixed prefix (`ifm_msglen` through `ifm_timer`) plus the
+/// 128-byte `if_data64` payload, 160 bytes total on 64-bit Darwin.
+pub const IF_MSGHDR2_LEN: usize = 160;
+/// Offset of `ifm_data.ifi_ibytes` inside `if_msghdr2`: the 32-byte fixed
+/// prefix plus 64 bytes into `if_data64`.
+pub const IFM_IBYTES_OFFSET: usize = 96;
+/// Offset of `ifm_data.ifi_obytes` inside `if_msghdr2`: the 32-byte fixed
+/// prefix plus 72 bytes into `if_data64`.
+pub const IFM_OBYTES_OFFSET: usize = 104;
 /// Hard cap for the one init-time NET_RT_IFLIST2 buffer: 1 MiB.
 pub const IFLIST2_CAPACITY_MAX: usize = 1024 * 1024;
 /// Darwin ENOMEM: cycle-local network capability loss without truncation.
@@ -25,8 +29,12 @@ pub const MACOS_ENOMEM: i32 = 12;
 const RT_MSG_PREFIX_LEN: usize = 4;
 const RTAX_MAX: u32 = 8;
 const RTAX_IFP: u32 = 4;
-const IFM_ADDRS_OFFSET: usize = 16;
-const SOCKADDR_ALIGN: usize = 8;
+/// Offset of `ifm_addrs` inside `if_msghdr2`: immediately after the
+/// 4-byte message prefix (`ifm_msglen`, `ifm_version`, `ifm_type`).
+pub const IFM_ADDRS_OFFSET: usize = 4;
+/// XNU NET_RT_IFLIST2 sockaddr stride unit: the serializer advances each
+/// sockaddr with ROUNDUP32 (4-byte roundup), not sizeof(long).
+const SOCKADDR_ALIGN: usize = 4;
 const SDL_HEADER_LEN: usize = 8;
 const SDL_MAX_NAME: usize = 16;
 
@@ -64,8 +72,10 @@ pub fn init_iflist2_buffer(query: Result<usize, i32>, page: usize) -> AuraResult
     Ok(vec![0u8; iflist2_capacity(needed, page)])
 }
 
-/// Darwin routing-message sockaddr stride: max(sa_len, sizeof(long))
-/// rounded up to sizeof(long); sizeof(long) is 8 on every supported macOS.
+/// Darwin routing-message sockaddr stride: XNU's NET_RT_IFLIST2 serializer
+/// rounds each sockaddr up to 4 bytes (ROUNDUP32), not sizeof(long). The
+/// 4-byte floor matches ROUNDUP32 for every reachable sa_len (the caller
+/// rejects sa_len < 2 before consulting the stride).
 const fn sockaddr_stride(sa_len: usize) -> usize {
     let floor = if sa_len < SOCKADDR_ALIGN {
         SOCKADDR_ALIGN

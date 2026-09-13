@@ -1,0 +1,120 @@
+name: final-f3-macos
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Canonical release tag bound by the aggregate (e.g. v1.0.0)
+        required: true
+      verified_commit:
+        description: 40-lowerhex commit every gate binds
+        required: true
+      run_id:
+        description: Release workflow run id that produced the aggregate lanes
+        required: true
+      run_attempt:
+        description: Release workflow run attempt (positive decimal)
+        required: true
+      aggregate_sha256:
+        description: SHA-256 of aggregate/SHA256SUMS inside the transport
+        required: true
+      transport_sha256:
+        description: SHA-256 of the aggregate.tar.gz transport asset
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  f3-macos-native:
+    runs-on: macos-15
+    steps:
+      - name: Checkout verified commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.verified_commit }}
+
+      - name: Download digest-bound aggregate transport
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          TRANSPORT_SHA256: ${{ inputs.transport_sha256 }}
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          printf '\n/final/\n' >> "$(git rev-parse --git-path info/exclude)"
+          mkdir -p final/work
+          asset_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" --jq "[.[] | select(.tag_name == env.TAG and .draft == true)][0].assets[] | select(.name == \"aggregate.tar.gz\") | .url")"
+          test -n "$asset_url"
+          gh api -H 'Accept: application/octet-stream' "$asset_url" > final/work/aggregate.tar.gz
+          echo "${TRANSPORT_SHA256}  final/work/aggregate.tar.gz" | sha256sum -c -
+
+      - name: Materialize F3 macOS input
+        env:
+          TRANSPORT_SHA256: ${{ inputs.transport_sha256 }}
+          AGGREGATE_SHA256: ${{ inputs.aggregate_sha256 }}
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          python3 scripts/extract-evidence-archive.py \
+            --archive final/work/aggregate.tar.gz \
+            --destination final/work/F3-input-macos \
+            --root aggregate \
+            --sha256 "$TRANSPORT_SHA256"
+          (cd final/work/F3-input-macos/aggregate && sha256sum -c SHA256SUMS --quiet)
+          test "$(sha256sum final/work/F3-input-macos/aggregate/SHA256SUMS | cut -d' ' -f1)" = "$AGGREGATE_SHA256"
+
+      - name: Run F3-02-macos native smoke
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          control="$(mktemp -d "${RUNNER_TEMP}/f3-macos-control.XXXXXX")"
+          chmod 700 "$control"
+          mkdir -m 700 "$control/home" "$control/tmp"
+          python3 - "$control" <<'PY'
+          import json, os, sys
+          control = sys.argv[1]
+          env = {"HOME": control + "/home", "PATH": os.environ["PATH"], "TMPDIR": control + "/tmp"}
+          with open(control + "/environment.json", "w") as handle:
+              handle.write(json.dumps(env, sort_keys=True, separators=(",", ":")) + "\n")
+          PY
+          python3 scripts/run-evidence-command.py \
+            --workspace . \
+            --registry qa/compliance-qa-registry.json \
+            --id F3-02-macos \
+            --environment "$control/environment.json" \
+            --tuple final/work/F3-native-macos/tuple
+
+      - name: Seal macOS native handoff
+        id: handoff
+        env:
+          TAG: ${{ inputs.tag }}
+          VERIFIED_COMMIT: ${{ inputs.verified_commit }}
+          RUN_ID: ${{ inputs.run_id }}
+          RUN_ATTEMPT: ${{ inputs.run_attempt }}
+          AGGREGATE_SHA256: ${{ inputs.aggregate_sha256 }}
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          archive="final/work/F3-input-macos/aggregate/releases/aura-aarch64-apple-darwin.tar.gz"
+          archive_sha="$(sha256sum "$archive" | cut -d' ' -f1)"
+          python3 scripts/seal-native-handoff.py \
+            --root final/work/F3-native-macos \
+            --registry qa/compliance-qa-registry.json \
+            --platform macos \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --tag "$TAG" \
+            --verified-commit "$VERIFIED_COMMIT" \
+            --aggregate-sha256 "$AGGREGATE_SHA256" \
+            --archive-path releases/aura-aarch64-apple-darwin.tar.gz \
+            --archive-sha256 "$archive_sha" \
+            --archive-file "$archive"
+          echo "receipt_sha256=$(sha256sum final/work/F3-native-macos/receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload macOS handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aura-f3-handoff-macos-${{ steps.handoff.outputs.receipt_sha256 }}
+          path: final/work/F3-native-macos/
+          if-no-files-found: error

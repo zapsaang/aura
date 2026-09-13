@@ -30,6 +30,19 @@ fn section<'a>(text: &'a str, header: &str) -> &'a str {
     }
 }
 
+fn workflow_job<'a>(workflow: &'a str, job: &str) -> &'a str {
+    let marker = format!("\n  {job}:\n");
+    let start = workflow
+        .find(&marker)
+        .unwrap_or_else(|| panic!("workflow missing job {job}"));
+    let body = &workflow[start + marker.len()..];
+    let end = body
+        .match_indices("\n  ")
+        .find_map(|(index, _)| (body.as_bytes().get(index + 3) != Some(&b' ')).then_some(index))
+        .unwrap_or(body.len());
+    &body[..end]
+}
+
 // ---------------------------------------------------------------- systemd
 
 #[test]
@@ -184,7 +197,6 @@ fn homebrew_source_formulas_removed() {
 fn homebrew_template_placeholders_and_binary_only() {
     let template = read("deployment/homebrew/aura.rb.in");
     for placeholder in [
-        "{VERSION}",
         "{TAG}",
         "{SHA256_LINUX_X86}",
         "{SHA256_LINUX_ARM}",
@@ -196,6 +208,14 @@ fn homebrew_template_placeholders_and_binary_only() {
             "template missing {placeholder}"
         );
     }
+    assert!(
+        template.contains("license any_of: [\"MIT\", \"Apache-2.0\"]"),
+        "SPDX expression must use any_of array form"
+    );
+    assert!(
+        !template.contains("version \""),
+        "version is scanned from the URL; explicit version is redundant"
+    );
     assert!(template.contains(
         "https://github.com/zapsaang/aura/releases/download/{TAG}/aura-aarch64-apple-darwin.tar.gz"
     ));
@@ -259,9 +279,12 @@ fn homebrew_render_produces_literal_urls_and_digests() {
         assert!(rendered.contains(&url), "rendered formula missing {url}");
     }
     assert_eq!(rendered.matches(VALID_SHA).count(), 4);
-    assert!(rendered.contains("version \"1.2.3\""));
+    assert!(rendered.contains("license any_of: [\"MIT\", \"Apache-2.0\"]"));
+    assert!(
+        !rendered.contains("version \""),
+        "rendered formula must not carry an explicit version line"
+    );
     for placeholder in [
-        "{VERSION}",
         "{TAG}",
         "{SHA256_LINUX_X86}",
         "{SHA256_LINUX_ARM}",
@@ -373,14 +396,15 @@ fn release_workflow_exact_four_tar_gz_targets() {
         "stale xz packaging must be gone"
     );
     assert_eq!(
-        release.matches("actions/upload-artifact@v4").count(),
-        5,
-        "four archives plus the formula artifact"
+        release.matches("actions/upload-artifact@").count(),
+        17,
+        "four archives, formula, nine lanes, and three producers"
     );
+    let registry = read("qa/compliance-qa-registry.json");
     assert_eq!(
-        release.matches("scripts/package-release.py").count(),
+        registry.matches("scripts/package-release.py").count(),
         4,
-        "each lane packages via the shared script"
+        "the closed registry assigns every release package command"
     );
 }
 
@@ -388,25 +412,38 @@ fn release_workflow_exact_four_tar_gz_targets() {
 fn release_workflow_gpu_feature_linux_only() {
     let release = read(".github/workflows/release.yml");
     assert_eq!(
-        release.matches("--features aura-daemon/gpu-nvml").count(),
-        2,
-        "exactly the two Linux builds enable NVML"
+        release.matches("--feature aura-daemon/gpu-nvml").count(),
+        3,
+        "the two Linux release lanes and Ubuntu GPU lane enable NVML"
     );
-    let darwin_arm = section(&release, "release-macos-arm64-build");
-    let darwin_x86 = section(&release, "release-macos-x86-build");
+    for linux in [
+        workflow_job(&release, "release-linux-x86"),
+        workflow_job(&release, "release-linux-arm64"),
+    ] {
+        assert!(linux.contains("--feature aura-daemon/gpu-nvml"));
+    }
+    let darwin_arm = workflow_job(&release, "release-macos-arm64");
+    let darwin_x86 = workflow_job(&release, "release-macos-x86");
     for darwin in [darwin_arm, darwin_x86] {
         assert!(
-            !darwin.contains("--features"),
+            !darwin.contains("gpu-nvml"),
             "Darwin builds must not enable NVML"
         );
-        assert!(darwin.contains("MACOSX_DEPLOYMENT_TARGET=12.0"));
     }
+    let registry = read("qa/compliance-qa-registry.json");
+    assert_eq!(
+        registry
+            .matches("MACOSX_DEPLOYMENT_TARGET=12.0 cargo +1.85.0 build")
+            .count(),
+        2,
+        "both Darwin build commands retain the deployment target"
+    );
 }
 
 #[test]
 fn release_workflow_homebrew_render_audit_ordering() {
     let release = read(".github/workflows/release.yml");
-    let render = section(&release, "homebrew-render:");
+    let render = workflow_job(&release, "homebrew-render");
     for lane in [
         "release-linux-x86",
         "release-linux-arm64",
@@ -415,11 +452,15 @@ fn release_workflow_homebrew_render_audit_ordering() {
     ] {
         assert!(render.contains(lane), "render must need {lane}");
     }
-    assert!(render.contains("scripts/render-homebrew-formula.py"));
-    assert!(render.contains("ruby -c dist/homebrew/aura.rb"));
-    let audit = section(&release, "homebrew-audit:");
+    assert!(render.contains("--job ubuntu-default"));
+    let audit = workflow_job(&release, "homebrew-audit");
     assert!(audit.contains("homebrew-render"));
-    assert!(audit.contains("brew audit --strict --formula dist/homebrew/aura.rb"));
+    assert!(audit.contains("--job macos-default"));
+    let registry = read("qa/compliance-qa-registry.json");
+    assert!(registry.contains("scripts/render-homebrew-formula.py"));
+    assert!(registry.contains("ruby -c dist/homebrew/aura.rb"));
+    assert!(registry.contains("brew audit --strict --formula aura/audit/aura"));
+    assert!(!registry.contains("brew audit --strict --formula dist/homebrew/aura.rb"));
     assert!(!release.contains("publish-homebrew"));
     assert!(!release.contains("gh release"));
     assert!(!release.contains("homebrew-tap"));
@@ -428,14 +469,19 @@ fn release_workflow_homebrew_render_audit_ordering() {
 #[test]
 fn release_workflow_keeps_intel_macos_coverage() {
     let release = read(".github/workflows/release.yml");
-    let x86 = section(&release, "release-macos-x86:");
+    let x86 = workflow_job(&release, "release-macos-x86");
     assert!(x86.contains("x86_64-apple-darwin"));
+    assert!(x86.contains("--job release-macos-x86"));
+    let registry = read("qa/compliance-qa-registry.json");
     for proof in [
         "release-macos-x86-file",
         "release-macos-x86-minos",
         "release-macos-x86-imports",
     ] {
-        assert!(x86.contains(proof), "Intel macOS lane missing {proof}");
+        assert!(
+            registry.contains(proof),
+            "Intel macOS lane registry missing {proof}"
+        );
     }
 }
 

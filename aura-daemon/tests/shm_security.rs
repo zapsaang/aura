@@ -17,7 +17,9 @@ use serial_test::serial;
 use tempfile::TempDir;
 
 fn test_dir() -> TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let base = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+    let dir = tempfile::Builder::new().tempdir_in(base).unwrap();
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     dir
 }

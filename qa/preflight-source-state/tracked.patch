@@ -1,0 +1,1323 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 7a701227d4936e10ffc07b2de27fbd69f5425782..0a6475cc2605966e30082a132985ea8df896816a 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -16,31 +16,13 @@ jobs:
+       - name: Checkout
+         uses: actions/checkout@v4
+ 
+-      - name: Init env
+-        env:
+-          DEBIAN_FRONTEND: noninteractive
+-        run: |
+-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-          echo 'DPkg::TriggersPending "false";' \
+-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-
+-          sudo -E apt-get -qq update
+-
+-          sudo -E apt-get install -y --no-install-recommends \
+-            build-essential \
+-            protobuf-compiler \
+-            libacl1-dev \
+-            libssl-dev \
+-            pkg-config
+-
+-      - name: Install Rust
+-        uses: dtolnay/rust-toolchain@stable
++      - name: Setup Rust
++        uses: ./.github/actions/setup-rust
+         with:
+           components: rustfmt, clippy
+-
+-      - name: Cache cargo
+-        uses: Swatinem/rust-cache@v2
++          extra-apt-packages: |
++            protobuf-compiler
++            libacl1-dev
+ 
+       - name: cargo fmt (check)
+         run: cargo fmt --all -- --check
+@@ -56,27 +38,8 @@ jobs:
+       - name: Checkout
+         uses: actions/checkout@v4
+ 
+-      - name: Init env
+-        env:
+-          DEBIAN_FRONTEND: noninteractive
+-        run: |
+-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-          echo 'DPkg::TriggersPending "false";' \
+-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-
+-          sudo -E apt-get -qq update
+-
+-          sudo -E apt-get install -y --no-install-recommends \
+-            build-essential \
+-            libssl-dev \
+-            pkg-config
+-
+-      - name: Install Rust
+-        uses: dtolnay/rust-toolchain@stable
+-
+-      - name: Cache cargo
+-        uses: Swatinem/rust-cache@v2
++      - name: Setup Rust
++        uses: ./.github/actions/setup-rust
+ 
+       - name: cargo test -p aura-common
+         run: cargo test -p aura-common
+@@ -89,27 +52,8 @@ jobs:
+       - name: Checkout
+         uses: actions/checkout@v4
+ 
+-      - name: Init env
+-        env:
+-          DEBIAN_FRONTEND: noninteractive
+-        run: |
+-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-          echo 'DPkg::TriggersPending "false";' \
+-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-
+-          sudo -E apt-get -qq update
+-
+-          sudo -E apt-get install -y --no-install-recommends \
+-            build-essential \
+-            libssl-dev \
+-            pkg-config
+-
+-      - name: Install Rust
+-        uses: dtolnay/rust-toolchain@stable
+-
+-      - name: Cache cargo
+-        uses: Swatinem/rust-cache@v2
++      - name: Setup Rust
++        uses: ./.github/actions/setup-rust
+ 
+       - name: cargo test -p aura-daemon
+         run: cargo test -p aura-daemon
+@@ -122,27 +66,8 @@ jobs:
+       - name: Checkout
+         uses: actions/checkout@v4
+ 
+-      - name: Init env
+-        env:
+-          DEBIAN_FRONTEND: noninteractive
+-        run: |
+-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-          echo 'DPkg::TriggersPending "false";' \
+-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-
+-          sudo -E apt-get -qq update
+-
+-          sudo -E apt-get install -y --no-install-recommends \
+-            build-essential \
+-            libssl-dev \
+-            pkg-config
+-
+-      - name: Install Rust
+-        uses: dtolnay/rust-toolchain@stable
+-
+-      - name: Cache cargo
+-        uses: Swatinem/rust-cache@v2
++      - name: Setup Rust
++        uses: ./.github/actions/setup-rust
+ 
+       - name: cargo test -p aura-cli
+         run: cargo test -p aura-cli
+@@ -155,32 +80,29 @@ jobs:
+       - name: Checkout
+         uses: actions/checkout@v4
+ 
+-      - name: Init env
+-        env:
+-          DEBIAN_FRONTEND: noninteractive
+-        run: |
+-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
+-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
+-          echo 'DPkg::TriggersPending "false";' \
+-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
++      - name: Setup Rust
++        uses: ./.github/actions/setup-rust
+ 
+-          sudo -E apt-get -qq update
++      - name: cargo test --workspace
++        env:
++          RUST_BACKTRACE: 1
++        run: cargo test --workspace
+ 
+-          sudo -E apt-get install -y --no-install-recommends \
+-            build-essential \
+-            libssl-dev \
+-            pkg-config
++  test-release:
++    name: test-release-build
++    runs-on: ubuntu-latest
+ 
+-      - name: Install Rust
+-        uses: dtolnay/rust-toolchain@stable
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
+ 
+-      - name: Cache cargo
+-        uses: Swatinem/rust-cache@v2
++      - name: Setup Rust
++        uses: ./.github/actions/setup-rust
+ 
+-      - name: cargo test --workspace
++      - name: cargo test --workspace --release
+         env:
+           RUST_BACKTRACE: 1
+-        run: cargo test --workspace
++        run: cargo test --workspace --release
+ 
+   test-macos:
+     name: test-macos
+@@ -190,11 +112,8 @@ jobs:
+       - name: Checkout
+         uses: actions/checkout@v4
+ 
+-      - name: Install Rust
+-        uses: dtolnay/rust-toolchain@stable
+-
+-      - name: Cache cargo
+-        uses: Swatinem/rust-cache@v2
++      - name: Setup Rust
++        uses: ./.github/actions/setup-rust
+ 
+       - name: cargo test --workspace
+         env:
+diff --git a/.gitignore b/.gitignore
+index af79803d3fe1111679c76332fdeee2e4bc8f164f..43ddaeacec7bfa3518ca1d1997c2c1c61611c2aa 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -20,3 +20,9 @@ target
+ #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
+ #.idea/
+ *.md
++.*/
++!.github/
++!.github/actions/
++!.github/actions/setup-rust/
++shell.nix
++opencode.json
+\ No newline at end of file
+diff --git a/Cargo.toml b/Cargo.toml
+index a917cd0e67bff5ae90ff0afd9ae1c09d21feb770..ffb2241a6c05dfa2e06fa3b440f6b489686ea647 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -20,7 +20,6 @@ memmap2 = "0.9"
+ 
+ # Atomic operations
+ crossbeam-epoch = "0.9"
+-ahash = "0.7"
+ 
+ # Error handling
+ thiserror = "1.0"
+diff --git a/aura-cli/src/format/json.rs b/aura-cli/src/format/json.rs
+index ca4b1fee3b995bccf7037ba84a94496a5508aefa..b85800008203ecf9357813a4e33ab765aa040178 100644
+--- a/aura-cli/src/format/json.rs
++++ b/aura-cli/src/format/json.rs
+@@ -1,4 +1,4 @@
+-use aura_common::{AuraError, AuraResult, TelemetryArchive};
++use aura_common::{bytes_to_string, AuraError, AuraResult, TelemetryArchive};
+ use serde::Serialize;
+ 
+ use crate::Module;
+@@ -240,13 +240,13 @@ fn meta_to_json(telemetry: &TelemetryArchive) -> MetaStatsJson {
+         load_avg_1m: meta.load_avg_1m,
+         load_avg_5m: meta.load_avg_5m,
+         load_avg_15m: meta.load_avg_15m,
+-        timezone_name: trim_zero_terminated(&meta.timezone_name),
++        timezone_name: bytes_to_string(&meta.timezone_name),
+         timezone_offset_secs: meta.timezone_offset_secs,
+         os: OsFingerprintJson {
+             os_type: meta.os.os_type.as_str().to_string(),
+             os_id: meta.os.os_id.as_str().to_string(),
+             os_version_id: meta.os.os_version_id.as_str().to_string(),
+-            os_pretty_name: trim_zero_terminated(&meta.os.os_pretty_name),
++            os_pretty_name: bytes_to_string(&meta.os.os_pretty_name),
+         },
+     }
+ }
+@@ -271,8 +271,3 @@ fn gpu_to_json(telemetry: &TelemetryArchive) -> GpuStatsJson {
+             .collect(),
+     }
+ }
+-
+-fn trim_zero_terminated(bytes: &[u8]) -> String {
+-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+-    String::from_utf8_lossy(&bytes[..end]).to_string()
+-}
+diff --git a/aura-cli/src/output/cpu.rs b/aura-cli/src/output/cpu.rs
+index ba964a171c7666158705f2dbdc9a1a771dea99b6..dc2260fb9fb9747db36ecd5e556afe12edfb3d79 100644
+--- a/aura-cli/src/output/cpu.rs
++++ b/aura-cli/src/output/cpu.rs
+@@ -55,6 +55,7 @@ mod tests {
+ 
+     #[test]
+     fn render_cpu_contains_usage_and_core_lines() {
++        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
+         let mut telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
+         telemetry.cpu = CpuGlobalStat {
+             user_ticks: 0,
+diff --git a/aura-cli/src/output/mem.rs b/aura-cli/src/output/mem.rs
+index 9365459cd5f273b5581c630bad839d28bd877842..1a8f62ede05aefb26040210a2f9e496635396697 100644
+--- a/aura-cli/src/output/mem.rs
++++ b/aura-cli/src/output/mem.rs
+@@ -65,6 +65,7 @@ mod tests {
+ 
+     #[test]
+     fn render_mem_contains_percent_and_totals() {
++        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
+         let mut telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
+         telemetry.memory = MemoryStats {
+             ram_total: 100,
+@@ -88,6 +89,7 @@ mod tests {
+ 
+     #[test]
+     fn render_swap_contains_swap_percent() {
++        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
+         let mut telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
+         telemetry.memory = MemoryStats {
+             ram_total: 0,
+diff --git a/aura-cli/src/output/meta.rs b/aura-cli/src/output/meta.rs
+index 5b42886ccc433f7768de8a7b4c20048f90933ab0..49f668dbbc42d3112fdf36f8d95e8f893954c7db 100644
+--- a/aura-cli/src/output/meta.rs
++++ b/aura-cli/src/output/meta.rs
+@@ -1,8 +1,8 @@
+-use aura_common::TelemetryArchive;
++use aura_common::{bytes_to_string, TelemetryArchive};
+ 
+ use crate::ColorMode;
+ 
+-use super::{ansi, trim_zero_terminated};
++use super::ansi;
+ 
+ pub fn os_logo(os_id: &str, os_type: &str) -> &'static str {
+     if os_type == "darwin" {
+@@ -41,10 +41,10 @@ pub fn os_logo(os_id: &str, os_type: &str) -> &'static str {
+ 
+ pub fn render(color: ColorMode, telemetry: &TelemetryArchive) -> String {
+     let meta = &telemetry.meta;
+-    let tz = trim_zero_terminated(&meta.timezone_name);
++    let tz = bytes_to_string(&meta.timezone_name);
+     let os_type = meta.os.os_type.as_str();
+     let os_id = meta.os.os_id.as_str();
+-    let pretty = trim_zero_terminated(&meta.os.os_pretty_name);
++    let pretty = bytes_to_string(&meta.os.os_pretty_name);
+ 
+     let mut out = String::new();
+     out.push_str(&ansi::style(color, ansi::BOLD, "=== META ==="));
+diff --git a/aura-cli/src/output/mod.rs b/aura-cli/src/output/mod.rs
+index 3fc522dcac06f3e4b06826be8e65676196eac8f4..bec268222a2eacf5d3efcbeb41edb93f7b71b4be 100644
+--- a/aura-cli/src/output/mod.rs
++++ b/aura-cli/src/output/mod.rs
+@@ -46,11 +46,6 @@ fn render_all(color: ColorMode, telemetry: &TelemetryArchive) -> String {
+     .join("\n")
+ }
+ 
+-pub(crate) fn trim_zero_terminated(bytes: &[u8]) -> String {
+-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+-    String::from_utf8_lossy(&bytes[..end]).to_string()
+-}
+-
+ #[cfg(test)]
+ mod tests {
+     use aura_common::TelemetryArchive;
+@@ -61,6 +56,7 @@ mod tests {
+ 
+     #[test]
+     fn routing_renders_cpu_module() {
++        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
+         let telemetry = unsafe { std::mem::zeroed::<TelemetryArchive>() };
+         let out = render(Module::Cpu, ColorMode::None, &telemetry);
+         assert!(out.contains("CPU"));
+diff --git a/aura-cli/src/reader.rs b/aura-cli/src/reader.rs
+index 241fbac44d72b219cefe4d58a53e879e6ce4e3be..6dd357147ecb0beb92318da5242c405b221d6683 100644
+--- a/aura-cli/src/reader.rs
++++ b/aura-cli/src/reader.rs
+@@ -35,6 +35,7 @@ impl TelemetryReader {
+             )));
+         }
+ 
++        // SAFETY: metadata verified the file is exactly `SHM_SIZE`; the read-only mapping length matches the SHM layout.
+         let mmap = unsafe {
+             MmapOptions::new()
+                 .len(SHM_SIZE)
+@@ -48,6 +49,7 @@ impl TelemetryReader {
+     }
+ 
+     pub fn read(&self) -> AuraResult<TelemetryArchive> {
++        // SAFETY: `self.mmap` covers the full SHM layout and `read_double_buffer` only performs atomic reads from it.
+         let mut snapshot = unsafe {
+             read_double_buffer(self.mmap.as_ptr() as *mut u8)
+                 .map_err(|()| AuraError::SeqLockInvalid)?
+@@ -128,6 +130,7 @@ mod tests {
+         write_snapshot(&mut mmap, &sample_telemetry(10.0));
+ 
+         let base = mmap.as_mut_ptr();
++        // SAFETY: `base` is from a writable `SHM_SIZE` mapping whose first bytes are an aligned `DoubleBufferHeader`.
+         let header = unsafe { &*(base as *const DoubleBufferHeader) };
+         let active_offset = if header
+             .active_index
+@@ -138,6 +141,7 @@ mod tests {
+         } else {
+             BUFFER_1_OFFSET
+         };
++        // SAFETY: `active_offset` selects an in-bounds archive buffer and the checksum field offset is aligned for `u32`.
+         unsafe {
+             let checksum_ptr = base
+                 .add(active_offset + std::mem::offset_of!(TelemetryArchive, checksum))
+@@ -184,12 +188,14 @@ mod tests {
+             .open(path)
+             .unwrap();
+         file.set_len(SHM_SIZE as u64).unwrap();
++        // SAFETY: the temp file was just sized to `SHM_SIZE`, matching the writable mapping length.
+         unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() }
+     }
+ 
+     fn write_snapshot(mmap: &mut memmap2::MmapMut, telemetry: &TelemetryArchive) {
+         let mut t = *telemetry;
+         t.checksum = t.calculate_checksum();
++        // SAFETY: `mmap` is a writable full-size test SHM mapping and `t` is a fully initialized snapshot.
+         unsafe {
+             write_double_buffer(mmap.as_mut_ptr(), &t);
+         }
+@@ -201,6 +207,7 @@ mod tests {
+     }
+ 
+     fn sample_telemetry(cpu_usage: f32) -> TelemetryArchive {
++        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
+         let mut t = unsafe { std::mem::zeroed::<TelemetryArchive>() };
+         t.version = 1;
+         t.cpu = CpuGlobalStat {
+@@ -256,10 +263,18 @@ mod tests {
+             _pad0: [0; 4],
+         };
+         t.storage = StorageStats {
+-            disks: [unsafe { std::mem::zeroed() }; MAX_DISKS],
++            disks: [
++                // SAFETY: `DiskStat` derives `bytemuck::Zeroable`, so an all-zero disk entry is valid.
++                unsafe { std::mem::zeroed() };
++                MAX_DISKS
++            ],
+             disk_count: 0,
+             _pad0: [0; 7],
+-            mounts: [unsafe { std::mem::zeroed() }; MAX_MOUNTS],
++            mounts: [
++                // SAFETY: `MountStat` derives `bytemuck::Zeroable`, so an all-zero mount entry is valid.
++                unsafe { std::mem::zeroed() };
++                MAX_MOUNTS
++            ],
+             mount_count: 0,
+             _pad1: [0; 6],
+         };
+diff --git a/aura-common/src/archive.rs b/aura-common/src/archive.rs
+index 32706dc71e9a821922edc8e711df2bb741fa1388..34ee0bbed1ed6beedf4916d172b7f319b91d3bbc 100644
+--- a/aura-common/src/archive.rs
++++ b/aura-common/src/archive.rs
+@@ -32,11 +32,18 @@ impl FixedString16 {
+         let slice = &self.bytes[..len];
+         match std::str::from_utf8(slice) {
+             Ok(s) => s,
+-            Err(e) => unsafe { std::str::from_utf8_unchecked(&slice[..e.valid_up_to()]) },
++            Err(e) => std::str::from_utf8(&slice[..e.valid_up_to()]).unwrap_or(""),
+         }
+     }
+ }
+ 
++/// Convert a byte slice to a `String`, stopping at the first NUL byte.
++/// Uses lossy UTF-8 conversion for any invalid sequences.
++pub fn bytes_to_string(bytes: &[u8]) -> String {
++    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
++    String::from_utf8_lossy(&bytes[..end]).to_string()
++}
++
+ fn find_utf8_truncation_point(b: &[u8], max_len: usize) -> usize {
+     let len = b.len().min(max_len);
+     if len == 0 {
+@@ -262,6 +269,7 @@ impl TelemetryArchive {
+     }
+ 
+     pub fn zeroed() -> Self {
++        // SAFETY: `TelemetryArchive` derives `bytemuck::Zeroable`, so the all-zero bit pattern is valid for every field.
+         unsafe { std::mem::zeroed() }
+     }
+ }
+diff --git a/aura-common/src/consts.rs b/aura-common/src/consts.rs
+index 29f65ccf6836fd808b0c98ce709e22b919bdbf90..a9acaf694e4ef1d9af8b24a9e41100f797a5bda1 100644
+--- a/aura-common/src/consts.rs
++++ b/aura-common/src/consts.rs
+@@ -41,6 +41,7 @@ pub fn system_page_size() -> usize {
+     *PAGE_SIZE.get_or_init(|| {
+         #[cfg(unix)]
+         {
++            // SAFETY: `_SC_PAGESIZE` is a valid `sysconf` name and the call uses no pointers or shared mutable state.
+             unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+         }
+         #[cfg(windows)]
+diff --git a/aura-common/src/double_buffer.rs b/aura-common/src/double_buffer.rs
+index 4d0faaa9779cfac4635416adb748af2041de18e3..be7a9314bcfd84f99c91a6e66091299177705279 100644
+--- a/aura-common/src/double_buffer.rs
++++ b/aura-common/src/double_buffer.rs
+@@ -27,13 +27,17 @@ const _: () = assert!(
+ /// - `src` must not be modified by non-atomic operations while this runs
+ #[inline]
+ unsafe fn atomic_read_shm(src: *mut u8, dst: *mut u8, len: usize) {
++    debug_assert_eq!(src.align_offset(8), 0, "src must be 8-byte aligned");
++    debug_assert_eq!(dst.align_offset(8), 0, "dst must be 8-byte aligned");
+     debug_assert_eq!(len % 8, 0);
+     let chunks = len / 8;
+     let src_u64 = src as *mut u64;
+     let dst_u64 = dst as *mut u64;
+     for i in 0..chunks {
+-        let val = AtomicU64::from_ptr(src_u64.add(i)).load(Ordering::Relaxed);
+-        dst_u64.add(i).write(val);
++        // SAFETY: `src` is 8-byte aligned, valid for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds for atomic loading.
++        let val = unsafe { AtomicU64::from_ptr(src_u64.add(i)).load(Ordering::Relaxed) };
++        // SAFETY: `dst` is 8-byte aligned, valid writable for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds to initialize.
++        unsafe { dst_u64.add(i).write(val) };
+     }
+ }
+ 
+@@ -47,13 +51,17 @@ unsafe fn atomic_read_shm(src: *mut u8, dst: *mut u8, len: usize) {
+ /// - `dst` must not be accessed by non-atomic operations while this runs
+ #[inline]
+ unsafe fn atomic_write_shm(src: *const u8, dst: *mut u8, len: usize) {
++    debug_assert_eq!(src.align_offset(8), 0, "src must be 8-byte aligned");
++    debug_assert_eq!(dst.align_offset(8), 0, "dst must be 8-byte aligned");
+     debug_assert_eq!(len % 8, 0);
+     let chunks = len / 8;
+     let src_u64 = src as *const u64;
+     let dst_u64 = dst as *mut u64;
+     for i in 0..chunks {
+-        let val = src_u64.add(i).read();
+-        AtomicU64::from_ptr(dst_u64.add(i)).store(val, Ordering::Relaxed);
++        // SAFETY: `src` is 8-byte aligned, valid for `len` bytes, and `i < chunks`, so this u64 lane is in-bounds for reading.
++        let val = unsafe { src_u64.add(i).read() };
++        // SAFETY: `dst` is 8-byte aligned shared memory, valid for `len` bytes, and `i < chunks`, so this lane can be atomically stored.
++        unsafe { AtomicU64::from_ptr(dst_u64.add(i)).store(val, Ordering::Relaxed) };
+     }
+ }
+ 
+@@ -68,6 +76,7 @@ unsafe fn atomic_write_shm(src: *const u8, dst: *mut u8, len: usize) {
+ /// a `DoubleBufferHeader` at offset 0 and two `TelemetryArchive` buffers.
+ #[inline]
+ pub unsafe fn write_double_buffer(base: *mut u8, archive: &TelemetryArchive) {
++    // SAFETY: `base` points to a writable SHM mapping whose offset 0 contains an 8-byte aligned `DoubleBufferHeader`.
+     let header = unsafe { &*(base as *const DoubleBufferHeader) };
+ 
+     let active = header.active_index.load(Ordering::Relaxed) & 1;
+@@ -81,10 +90,12 @@ pub unsafe fn write_double_buffer(base: *mut u8, archive: &TelemetryArchive) {
+     } else {
+         BUFFER_1_OFFSET
+     };
++    // SAFETY: `offset` is one of the two fixed buffer offsets inside the SHM mapping, both within `SHM_SIZE` and 8-byte aligned.
+     let dst = unsafe { base.add(offset) };
+ 
+     // Atomic copy: prevents UB if reader is slow; Relaxed is sufficient since
+     // seq fences provide ordering and individual u64 ops are hardware-atomic.
++    // SAFETY: `archive` is initialized and 8-byte aligned; `dst` points to a full archive buffer and `ARCHIVE_SIZE` is a multiple of 8.
+     unsafe {
+         atomic_write_shm(
+             archive as *const TelemetryArchive as *const u8,
+@@ -121,6 +132,7 @@ pub unsafe fn write_double_buffer(base: *mut u8, archive: &TelemetryArchive) {
+ #[inline]
+ #[allow(clippy::result_unit_err)]
+ pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()> {
++    // SAFETY: `base` points to a readable SHM mapping whose offset 0 contains an 8-byte aligned `DoubleBufferHeader`.
+     let header = unsafe { &*(base as *const DoubleBufferHeader) };
+ 
+     for _ in 0..3 {
+@@ -140,10 +152,12 @@ pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()>
+             BUFFER_1_OFFSET
+         };
+ 
++        // SAFETY: `offset` selects the active archive buffer inside the SHM mapping, within bounds and aligned for atomic u64 reads.
+         let src = unsafe { base.add(offset) };
+         let mut archive = MaybeUninit::<TelemetryArchive>::uninit();
+ 
+         // Step 3: atomic copy from the active buffer
++        // SAFETY: `src` points to a full archive buffer; `archive` is writable uninit storage and `ARCHIVE_SIZE` is a multiple of 8.
+         unsafe {
+             atomic_read_shm(src, archive.as_mut_ptr() as *mut u8, ARCHIVE_SIZE);
+         }
+@@ -153,9 +167,125 @@ pub unsafe fn read_double_buffer(base: *mut u8) -> Result<TelemetryArchive, ()>
+         let seq2 = header.seq[active as usize].load(Ordering::Acquire);
+ 
+         if seq1 == seq2 {
++            // SAFETY: `atomic_read_shm` initialized exactly `ARCHIVE_SIZE` bytes, which is the complete `TelemetryArchive`.
+             return Ok(unsafe { archive.assume_init() });
+         }
+     }
+ 
+     Err(())
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{TelemetryArchive, SHM_SIZE};
++
++    fn aligned_shm_buffer() -> (Vec<u64>, *mut u8) {
++        let mut buf = vec![0u64; SHM_SIZE / 8];
++        let ptr = buf.as_mut_ptr() as *mut u8;
++        assert_eq!(ptr.align_offset(8), 0, "Vec<u64> must be 8-byte aligned");
++        assert_eq!(buf.len() * 8, SHM_SIZE, "Buffer must cover full SHM size");
++        (buf, ptr)
++    }
++
++    #[test]
++    fn write_then_read_returns_same_data() {
++        let (_buf, base) = aligned_shm_buffer();
++
++        let mut archive = TelemetryArchive::zeroed();
++        archive.version = 42;
++        archive.cpu.user_ticks = 1234;
++        archive.memory.ram_total = 16_777_216;
++
++        // SAFETY: `base` comes from `aligned_shm_buffer`, a zeroed `Vec<u64>` covering `SHM_SIZE` with 8-byte alignment.
++        unsafe {
++            write_double_buffer(base, &archive);
++        }
++
++        // SAFETY: `base` still points to the same aligned, initialized test SHM buffer after the clean write.
++        let result = unsafe { read_double_buffer(base) };
++        let read_back = result.expect("read should succeed after a clean write");
++
++        assert_eq!(read_back.version, 42);
++        assert_eq!(read_back.cpu.user_ticks, 1234);
++        assert_eq!(read_back.memory.ram_total, 16_777_216);
++    }
++
++    #[test]
++    fn read_returns_err_when_seq_is_odd() {
++        let (_buf, base) = aligned_shm_buffer();
++
++        // SAFETY: `base` is an 8-byte aligned test SHM buffer whose first bytes are the zeroed header.
++        let header = unsafe { &*(base as *const DoubleBufferHeader) };
++        header.active_index.store(0, Ordering::Relaxed);
++        header.seq[0].store(1, Ordering::Relaxed);
++
++        // SAFETY: `base` is a valid aligned test SHM buffer; the intentionally odd seq exercises the error path.
++        let result = unsafe { read_double_buffer(base) };
++        assert!(result.is_err(), "read should fail when seq[active] is odd");
++    }
++
++    #[test]
++    fn write_flips_active_index() {
++        let (_buf, base) = aligned_shm_buffer();
++
++        // SAFETY: `base` is an 8-byte aligned test SHM buffer whose first bytes are the zeroed header.
++        let header = unsafe { &*(base as *const DoubleBufferHeader) };
++        assert_eq!(
++            header.active_index.load(Ordering::Relaxed),
++            0,
++            "initial active_index should be 0 (zeroed memory)"
++        );
++
++        let archive = TelemetryArchive::zeroed();
++        // SAFETY: `base` is a valid aligned test SHM buffer covering the full double-buffer layout.
++        unsafe {
++            write_double_buffer(base, &archive);
++        }
++
++        assert_eq!(
++            header.active_index.load(Ordering::Relaxed),
++            1,
++            "active_index should flip to 1 after first write"
++        );
++    }
++
++    #[test]
++    fn multiple_writes_increment_seq_by_2() {
++        let (_buf, base) = aligned_shm_buffer();
++
++        // SAFETY: `base` is an 8-byte aligned test SHM buffer whose first bytes are the zeroed header.
++        let header = unsafe { &*(base as *const DoubleBufferHeader) };
++        let archive = TelemetryArchive::zeroed();
++
++        // SAFETY: `base` is a valid aligned test SHM buffer covering the full double-buffer layout.
++        unsafe {
++            write_double_buffer(base, &archive);
++        }
++        let seq_after_1 = header.seq[1].load(Ordering::Relaxed);
++        assert_eq!(
++            seq_after_1, 2,
++            "seq[inactive] should be 2 after first write (0→1→2)"
++        );
++
++        // SAFETY: `base` remains valid for the second write into the alternate archive buffer.
++        unsafe {
++            write_double_buffer(base, &archive);
++        }
++        let seq_after_2 = header.seq[0].load(Ordering::Relaxed);
++        assert_eq!(
++            seq_after_2, 2,
++            "seq[inactive=0] should be 2 after second write (0→1→2)"
++        );
++
++        // SAFETY: `base` remains valid for the third write into the original archive buffer.
++        unsafe {
++            write_double_buffer(base, &archive);
++        }
++        let seq_after_3 = header.seq[1].load(Ordering::Relaxed);
++        assert_eq!(
++            seq_after_3, 4,
++            "seq[inactive=1] should be 4 after third write (2→3→4)"
++        );
++    }
++}
+diff --git a/aura-common/src/lib.rs b/aura-common/src/lib.rs
+index 4d71e4ca3aa0af604059452607b3dcb066c485ff..f1bd50e39a2e9cdcc31e9f93263d1462ade3769d 100644
+--- a/aura-common/src/lib.rs
++++ b/aura-common/src/lib.rs
+@@ -6,9 +6,10 @@ pub mod seqlock;
+ pub mod time;
+ 
+ pub use archive::{
+-    CpuCoreStat, CpuGlobalStat, DiskStat, FixedString16, GpuStat, GpuStats, MemoryStats, MetaStats,
+-    MountStat, NetIfStat, NetworkStats, OsFingerprint, ProcessStat, ProcessStats, StorageStats,
+-    TelemetryArchive, MAX_CORES, MAX_DISKS, MAX_MOUNTS, MAX_NETIFS, MAX_PROC_NAME_LEN, MAX_TOP_N,
++    bytes_to_string, CpuCoreStat, CpuGlobalStat, DiskStat, FixedString16, GpuStat, GpuStats,
++    MemoryStats, MetaStats, MountStat, NetIfStat, NetworkStats, OsFingerprint, ProcessStat,
++    ProcessStats, StorageStats, TelemetryArchive, MAX_CORES, MAX_DISKS, MAX_MOUNTS, MAX_NETIFS,
++    MAX_PROC_NAME_LEN, MAX_TOP_N,
+ };
+ pub use consts::{
+     system_page_size, BUFFER_0_OFFSET, BUFFER_1_OFFSET, BUFFER_SIZE, DATA_OFFSET,
+diff --git a/aura-common/src/time.rs b/aura-common/src/time.rs
+index 3ea00b59c6660c734ab864f9c5f014291edc4904..925d427ee862ae7640849d38b269254d7455563f 100644
+--- a/aura-common/src/time.rs
++++ b/aura-common/src/time.rs
+@@ -5,6 +5,7 @@ pub fn monotonic_ns() -> u64 {
+         tv_sec: 0,
+         tv_nsec: 0,
+     };
++    // SAFETY: `ts` is a valid writable `timespec` pointer and `CLOCK_BOOTTIME` is a valid Linux clock id.
+     unsafe {
+         libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts);
+     }
+@@ -20,6 +21,7 @@ pub fn monotonic_ns() -> u64 {
+         tv_sec: 0,
+         tv_nsec: 0,
+     };
++    // SAFETY: `ts` is a valid writable `timespec` pointer and `CLOCK_MONOTONIC` is a valid macOS clock id.
+     unsafe {
+         libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+     }
+diff --git a/aura-daemon/src/collectors/memory/linux.rs b/aura-daemon/src/collectors/memory/linux.rs
+index cd99cca36a66adcb0f553ee699b582f154bb9e3b..68ecbbf74f4cbb36356d468abf3c396af1b0e855 100644
+--- a/aura-daemon/src/collectors/memory/linux.rs
++++ b/aura-daemon/src/collectors/memory/linux.rs
+@@ -83,18 +83,22 @@ pub fn collect(
+     vmstat.read_to_end(vmstat_buf)?;
+     stats.page_faults = parse_vmstat_page_faults(&vmstat_buf[..]);
+ 
+-    let delta_faults = stats.page_faults.saturating_sub(*prev_page_faults);
+-    stats.page_faults_per_sec = if delta_secs > 0.0 {
+-        (delta_faults as f64 / delta_secs) as f32
+-    } else {
+-        0.0
+-    };
++    stats.page_faults_per_sec =
++        calculate_page_fault_rate(stats.page_faults, *prev_page_faults, delta_secs);
+ 
+     *prev_page_faults = stats.page_faults;
+     *out = stats;
+     Ok(())
+ }
+ 
++fn calculate_page_fault_rate(current: u64, previous: u64, delta_secs: f64) -> f32 {
++    if delta_secs > 0.0 {
++        (current.saturating_sub(previous) as f64 / delta_secs) as f32
++    } else {
++        0.0
++    }
++}
++
+ fn parse_first_u64(b: &[u8]) -> u64 {
+     let mut out = 0u64;
+     let mut seen = false;
+@@ -111,7 +115,7 @@ fn parse_first_u64(b: &[u8]) -> u64 {
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::{parse_meminfo, parse_vmstat_page_faults};
++    use super::{calculate_page_fault_rate, parse_meminfo, parse_vmstat_page_faults};
+ 
+     #[test]
+     fn parse_meminfo_sample() {
+@@ -128,4 +132,13 @@ mod tests {
+         let faults = parse_vmstat_page_faults(fixture);
+         assert_eq!(faults, 67890);
+     }
++
++    #[test]
++    fn calculate_page_fault_rate_from_parsed_sample() {
++        let fixture = include_bytes!("../../../tests/fixtures/proc_vmstat_sample.txt");
++        let faults = parse_vmstat_page_faults(fixture);
++        let rate = calculate_page_fault_rate(faults, 1000, 1.0);
++
++        assert_eq!(rate, 66890.0);
++    }
+ }
+diff --git a/aura-daemon/src/collectors/meta.rs b/aura-daemon/src/collectors/meta.rs
+index 0b7885afbeb8f46c1bdf1793db7dbaf430d3691f..8935b9365a2bb598e5d342b0a3c7990c5a9ea81c 100644
+--- a/aura-daemon/src/collectors/meta.rs
++++ b/aura-daemon/src/collectors/meta.rs
+@@ -144,6 +144,7 @@ fn timezone_info() -> ([u8; 8], i32) {
+     let mut out = [0u8; 8];
+     let mut offset = 0i32;
+ 
++    // SAFETY: `local_tm` is valid `tm` storage, `localtime_r` return is checked, and `tm_zone` is checked for null before `CStr`.
+     unsafe {
+         let now = libc::time(std::ptr::null_mut());
+         let mut local_tm = std::mem::zeroed::<libc::tm>();
+diff --git a/aura-daemon/src/collectors/network/linux.rs b/aura-daemon/src/collectors/network/linux.rs
+index a4b7b8d29c9429dca88afa111eb982055a18753d..5af323bb3377741adcbff4d8e3e5e10730819f5a 100644
+--- a/aura-daemon/src/collectors/network/linux.rs
++++ b/aura-daemon/src/collectors/network/linux.rs
+@@ -87,35 +87,40 @@ pub fn collect(
+     f.read_to_end(buf)?;
+     parse_net_dev(&buf[..], &mut out.interfaces, &mut out.if_count)?;
+ 
++    apply_rate_calculations(out, prev, delta_secs);
++
++    Ok(())
++}
++
++fn apply_rate_calculations(out: &mut NetworkStats, prev: &mut NetByteSnapshot, delta_secs: f64) {
+     let count = out.if_count as usize;
+     let mut i = 0usize;
+     while i < count && i < MAX_NETIFS {
+         let rx = out.interfaces[i].rx_bytes;
+         let tx = out.interfaces[i].tx_bytes;
+         let (prx, ptx) = prev.interfaces[i];
+-        out.interfaces[i].rx_bytes_per_sec = if delta_secs > 0.0 {
+-            (rx.saturating_sub(prx) as f64 / delta_secs) as f32
+-        } else {
+-            0.0
+-        };
+-        out.interfaces[i].tx_bytes_per_sec = if delta_secs > 0.0 {
+-            (tx.saturating_sub(ptx) as f64 / delta_secs) as f32
+-        } else {
+-            0.0
+-        };
++        out.interfaces[i].rx_bytes_per_sec = calculate_rate(rx, prx, delta_secs);
++        out.interfaces[i].tx_bytes_per_sec = calculate_rate(tx, ptx, delta_secs);
+         prev.interfaces[i] = (rx, tx);
+         i += 1;
+     }
+     prev.count = count;
++}
+ 
+-    Ok(())
++fn calculate_rate(current: u64, previous: u64, delta_secs: f64) -> f32 {
++    if delta_secs > 0.0 {
++        (current.saturating_sub(previous) as f64 / delta_secs) as f32
++    } else {
++        0.0
++    }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use aura_common::{NetIfStat, MAX_NETIFS};
++    use aura_common::{NetIfStat, NetworkStats, MAX_NETIFS};
+ 
+-    use super::parse_net_dev;
++    use super::{apply_rate_calculations, parse_net_dev};
++    use crate::collectors::NetByteSnapshot;
+ 
+     #[test]
+     fn parse_net_dev_sample() {
+@@ -134,4 +139,30 @@ mod tests {
+         assert_eq!(interfaces[0].rx_bytes, 5678);
+         assert_eq!(interfaces[0].tx_bytes, 8765);
+     }
++
++    #[test]
++    fn calculate_net_rates_from_parsed_sample() {
++        let fixture = include_bytes!("../../../tests/fixtures/proc_net_dev_sample.txt");
++        let mut stats = NetworkStats {
++            interfaces: [NetIfStat {
++                name: aura_common::FixedString16::new(),
++                rx_bytes: 0,
++                tx_bytes: 0,
++                rx_bytes_per_sec: 0.0,
++                tx_bytes_per_sec: 0.0,
++            }; MAX_NETIFS],
++            if_count: 0,
++            _pad0: [0; 7],
++        };
++        parse_net_dev(fixture, &mut stats.interfaces, &mut stats.if_count).expect("parse");
++
++        let mut prev = NetByteSnapshot::zero();
++        prev.interfaces[0] = (1000, 2000);
++        apply_rate_calculations(&mut stats, &mut prev, 1.0);
++
++        assert_eq!(stats.interfaces[0].rx_bytes_per_sec, 4678.0);
++        assert_eq!(stats.interfaces[0].tx_bytes_per_sec, 6765.0);
++        assert_eq!(prev.interfaces[0], (5678, 8765));
++        assert_eq!(prev.count, 1);
++    }
+ }
+diff --git a/aura-daemon/src/main.rs b/aura-daemon/src/main.rs
+index 47770c39f2d02ebae99a46867e739acce70eb4ef..5247ec5f6134664b423118f0bc11d1c4c3dea897 100644
+--- a/aura-daemon/src/main.rs
++++ b/aura-daemon/src/main.rs
+@@ -16,8 +16,11 @@ unsafe fn setup_signal_handlers() {
+     extern "C" fn handler(_sig: libc::c_int) {
+         SHUTDOWN_FLAG.store(true, Ordering::Relaxed);
+     }
+-    libc::signal(libc::SIGINT, handler as *const () as usize);
+-    libc::signal(libc::SIGTERM, handler as *const () as usize);
++    // SAFETY: the handler has C ABI, accepts the required signal integer, and only stores to a static atomic flag.
++    unsafe {
++        libc::signal(libc::SIGINT, handler as *const () as usize);
++        libc::signal(libc::SIGTERM, handler as *const () as usize);
++    }
+ }
+ 
+ #[cfg(not(target_os = "linux"))]
+@@ -69,6 +72,7 @@ fn main() {
+         .format_timestamp_millis()
+         .init();
+ 
++    // SAFETY: called once during startup to install fixed SIGINT/SIGTERM handlers before the daemon loop begins.
+     unsafe {
+         setup_signal_handlers();
+     }
+diff --git a/aura-daemon/src/platform/macos.rs b/aura-daemon/src/platform/macos.rs
+index 0d8db5c4b16353da009414a7168003498ca17dd9..586c3266e1e296d11acd24e288f12c366c73cd2a 100644
+--- a/aura-daemon/src/platform/macos.rs
++++ b/aura-daemon/src/platform/macos.rs
+@@ -45,6 +45,7 @@ pub fn boot_time() -> AuraResult<u64> {
+     let mut boot_time_val = MaybeUninit::<libc::timeval>::uninit();
+     let mut size = std::mem::size_of::<libc::timeval>();
+ 
++    // SAFETY: `mib` names `kern.boottime`, `boot_time_val` is valid writable timeval storage, and `size` matches that type.
+     let ret = unsafe {
+         libc::sysctl(
+             mib.as_mut_ptr(),
+@@ -62,7 +63,9 @@ pub fn boot_time() -> AuraResult<u64> {
+         ));
+     }
+ 
++    // SAFETY: `sysctl` returned success, so `boot_time_val` was initialized by the kernel.
+     let bt = unsafe { boot_time_val.assume_init() };
++    // SAFETY: `time` permits a null output pointer when only the return value is needed.
+     let now = unsafe { libc::time(std::ptr::null_mut()) };
+ 
+     let uptime = now.saturating_sub(bt.tv_sec as i64) as u64;
+@@ -94,6 +97,18 @@ const PROC_PIDTASKINFO: libc::c_int = 4;
+ #[cfg(target_os = "macos")]
+ const PROC_PIDTBSDINFO: libc::c_int = 3;
+ 
++// vm_statistics64 field indices (from <mach/vm_statistics.h>)
++#[cfg(target_os = "macos")]
++const VM_STAT_FREE_COUNT: usize = 0;
++#[cfg(target_os = "macos")]
++const VM_STAT_ACTIVE_COUNT: usize = 1;
++#[cfg(target_os = "macos")]
++const VM_STAT_INACTIVE_COUNT: usize = 2;
++#[cfg(target_os = "macos")]
++const VM_STAT_WIRE_COUNT: usize = 6;
++#[cfg(target_os = "macos")]
++const VM_STAT_FAULTS: usize = 7;
++
+ #[cfg(target_os = "macos")]
+ const SIDL: u32 = 1;
+ #[cfg(target_os = "macos")]
+@@ -104,6 +119,7 @@ const SSLEEP: u32 = 3;
+ const SSTOP: u32 = 4;
+ 
+ #[cfg(target_os = "macos")]
++// SAFETY: these declarations mirror Darwin/Mach C APIs; each call site documents its pointer and length invariants.
+ unsafe extern "C" {
+     fn mach_host_self() -> MachPort;
+     fn mach_task_self() -> MachPort;
+@@ -261,6 +277,7 @@ impl MacosPlatform {
+     pub fn new() -> AuraResult<Self> {
+         #[cfg(target_os = "macos")]
+         {
++            // SAFETY: `mach_host_self` takes no arguments and returns the current task's host send right.
+             let host_port = unsafe { mach_host_self() };
+             return Ok(Self {
+                 host_port,
+@@ -289,8 +306,10 @@ impl PlatformStatsProvider for MacosPlatform {
+             let mut processor_count: libc::c_uint = 0;
+             let mut cpu_info: ProcessorInfoArray = std::ptr::null_mut();
+             let mut cpu_info_count: MachMsgTypeNumber = 0;
++            // SAFETY: `mach_absolute_time` takes no arguments and returns a monotonic tick count.
+             let now_timestamp_ns = mach_absolute_to_ns(unsafe { mach_absolute_time() });
+ 
++            // SAFETY: output pointers are valid for processor count/info/count, and `self.host_port` came from `mach_host_self`.
+             let ret = unsafe {
+                 host_processor_info(
+                     self.host_port,
+@@ -316,6 +335,7 @@ impl PlatformStatsProvider for MacosPlatform {
+ 
+             if !cpu_info.is_null() {
+                 let len = cpu_info_count as usize;
++                // SAFETY: `host_processor_info` returned a non-null allocation containing `cpu_info_count` c_int values.
+                 let values = unsafe { std::slice::from_raw_parts(cpu_info, len) };
+                 let mut idx = 0usize;
+                 let mut core_idx = 0usize;
+@@ -354,6 +374,7 @@ impl PlatformStatsProvider for MacosPlatform {
+                 }
+                 core_count = core_idx as u8;
+ 
++                // SAFETY: `cpu_info` and byte size are exactly the allocation returned by `host_processor_info`.
+                 let _ = unsafe {
+                     vm_deallocate(
+                         mach_task_self(),
+@@ -427,6 +448,7 @@ impl PlatformStatsProvider for MacosPlatform {
+         {
+             let mut stats_buf = [0i32; 128];
+             let mut count = stats_buf.len() as MachMsgTypeNumber;
++            // SAFETY: `stats_buf` is writable for `count` integer lanes and `self.host_port` is a valid host port.
+             let ret = unsafe {
+                 host_statistics64(
+                     self.host_port,
+@@ -443,14 +465,26 @@ impl PlatformStatsProvider for MacosPlatform {
+             }
+ 
+             let page_size = system_page_size() as u64;
+-            let free =
+-                (stats_buf.get(0).copied().unwrap_or_default() as u64).saturating_mul(page_size);
+-            let active =
+-                (stats_buf.get(1).copied().unwrap_or_default() as u64).saturating_mul(page_size);
+-            let inactive =
+-                (stats_buf.get(2).copied().unwrap_or_default() as u64).saturating_mul(page_size);
+-            let wired =
+-                (stats_buf.get(6).copied().unwrap_or_default() as u64).saturating_mul(page_size);
++            let free = (stats_buf
++                .get(VM_STAT_FREE_COUNT)
++                .copied()
++                .unwrap_or_default() as u64)
++                .saturating_mul(page_size);
++            let active = (stats_buf
++                .get(VM_STAT_ACTIVE_COUNT)
++                .copied()
++                .unwrap_or_default() as u64)
++                .saturating_mul(page_size);
++            let inactive = (stats_buf
++                .get(VM_STAT_INACTIVE_COUNT)
++                .copied()
++                .unwrap_or_default() as u64)
++                .saturating_mul(page_size);
++            let wired = (stats_buf
++                .get(VM_STAT_WIRE_COUNT)
++                .copied()
++                .unwrap_or_default() as u64)
++                .saturating_mul(page_size);
+ 
+             let total = free
+                 .saturating_add(active)
+@@ -466,7 +500,7 @@ impl PlatformStatsProvider for MacosPlatform {
+                 swap_total: 0,
+                 swap_free: 0,
+                 swap_used: 0,
+-                page_faults: (stats_buf.get(7).copied().unwrap_or_default() as u64),
++                page_faults: (stats_buf.get(VM_STAT_FAULTS).copied().unwrap_or_default() as u64),
+                 page_faults_per_sec: 0.0,
+                 _pad0: [0; 4],
+             });
+@@ -494,6 +528,7 @@ impl PlatformStatsProvider for MacosPlatform {
+ 
+             let pid_cap = 4096usize;
+             let mut pids = vec![0u32; pid_cap];
++            // SAFETY: `pids` is writable for `pid_cap * size_of::<u32>()` bytes, matching the supplied buffer size.
+             let listed = unsafe {
+                 proc_listallpids(
+                     pids.as_mut_ptr() as *mut libc::c_void,
+@@ -524,6 +559,7 @@ impl PlatformStatsProvider for MacosPlatform {
+                 }
+ 
+                 let mut taskinfo = ProcTaskInfo::default();
++                // SAFETY: `taskinfo` is writable storage and `taskinfo_size` exactly matches `ProcTaskInfo`; return size is checked.
+                 let task_ret = unsafe {
+                     proc_pidinfo(
+                         *pid as libc::c_int,
+@@ -538,6 +574,7 @@ impl PlatformStatsProvider for MacosPlatform {
+                 }
+ 
+                 let mut bsdinfo = ProcBsdInfo::default();
++                // SAFETY: `bsdinfo` is writable storage and `bsdinfo_size` exactly matches `ProcBsdInfo`; return size is checked.
+                 let bsd_ret = unsafe {
+                     proc_pidinfo(
+                         *pid as libc::c_int,
+@@ -569,6 +606,7 @@ impl PlatformStatsProvider for MacosPlatform {
+                 let delta_ticks = proc_ticks.saturating_sub(prev_ticks);
+ 
+                 let mut name_buf = [0u8; 64];
++                // SAFETY: `name_buf` is writable for its full length and the returned byte count is validated before slicing.
+                 let name_len = unsafe {
+                     proc_name(
+                         *pid as libc::c_int,
+@@ -633,6 +671,7 @@ impl PlatformStatsProvider for MacosPlatform {
+ 
+ #[cfg(target_os = "macos")]
+ fn c_char_bytes(buf: &[libc::c_char]) -> &[u8] {
++    // SAFETY: `u8` has alignment 1 and the byte slice covers the same initialized `c_char` buffer length.
+     let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
+     let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+     &bytes[..len]
+@@ -644,6 +683,7 @@ fn mach_timebase_ratio() -> (u64, u64) {
+ 
+     *TIMEBASE.get_or_init(|| {
+         let mut info = libc::mach_timebase_info_data_t { numer: 0, denom: 0 };
++        // SAFETY: `info` is valid writable storage for `mach_timebase_info_data_t`; return and denominator are checked.
+         let ret = unsafe { mach_timebase_info(&mut info) };
+         if ret == KERN_SUCCESS && info.numer > 0 && info.denom > 0 {
+             (u64::from(info.numer), u64::from(info.denom))
+diff --git a/aura-daemon/src/state.rs b/aura-daemon/src/state.rs
+index 2efdf23344047097fe588fee546fd842e3f8cedc..a9c3d9cc5bcf9a0d220a65c61db70f865467e818 100644
+--- a/aura-daemon/src/state.rs
++++ b/aura-daemon/src/state.rs
+@@ -35,6 +35,7 @@ impl ShmHandle {
+         #[cfg(unix)]
+         {
+             let fd = lock_file.as_raw_fd();
++            // SAFETY: `fd` comes from the live lock file and the flock operation has no pointer arguments; `rc` is checked.
+             let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+             if rc != 0 {
+                 let err = std::io::Error::last_os_error();
+@@ -63,15 +64,19 @@ impl ShmHandle {
+             {
+                 let fd = file.as_raw_fd();
+                 let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::uninit();
++                // SAFETY: `fd` is open and `stat_buf` points to writable `libc::stat` storage; the return value is checked before use.
+                 if unsafe { libc::fstat(fd, stat_buf.as_mut_ptr()) } != 0 {
+                     return Err(std::io::Error::last_os_error().into());
+                 }
++                // SAFETY: `fstat` returned success, so `stat_buf` was fully initialized by the kernel.
+                 let stat = unsafe { stat_buf.assume_init() };
+ 
++                // SAFETY: `geteuid` takes no pointers and has no preconditions.
+                 if stat.st_uid != unsafe { libc::geteuid() } {
+                     return Err(AuraError::Security(format!(
+                         "SHM owned by uid {}, expected {}",
+                         stat.st_uid,
++                        // SAFETY: `geteuid` takes no pointers and has no preconditions.
+                         unsafe { libc::geteuid() }
+                     )));
+                 }
+@@ -95,11 +100,13 @@ impl ShmHandle {
+                     return Err(AuraError::Security("SHM is not a regular file".into()));
+                 }
+ 
++                // SAFETY: `fd` is open for the validated SHM file and `SHM_FILE_MODE` is a valid mode value; `rc` is checked.
+                 let rc = unsafe { libc::fchmod(fd, SHM_FILE_MODE as libc::mode_t) };
+                 if rc != 0 {
+                     return Err(std::io::Error::last_os_error().into());
+                 }
+ 
++                // SAFETY: `fd` is open for writing and `SHM_SIZE` is the exact non-negative mapping length; `rc` is checked.
+                 let rc = unsafe { libc::ftruncate(fd, SHM_SIZE as libc::off_t) };
+                 if rc != 0 {
+                     return Err(std::io::Error::last_os_error().into());
+@@ -109,6 +116,7 @@ impl ShmHandle {
+             #[cfg(not(unix))]
+             file.set_len(SHM_SIZE as u64)?;
+ 
++            // SAFETY: the file was validated and truncated to exactly `SHM_SIZE`, matching the writable mapping length.
+             let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
+             return Ok(Self {
+                 mmap,
+@@ -155,11 +163,13 @@ impl ShmHandle {
+         #[cfg(unix)]
+         {
+             let fd = file.as_raw_fd();
++            // SAFETY: `fd` is the newly-created SHM file and `SHM_FILE_MODE` is a valid mode value; `rc` is checked.
+             let rc = unsafe { libc::fchmod(fd, SHM_FILE_MODE as libc::mode_t) };
+             if rc != 0 {
+                 return Err(std::io::Error::last_os_error().into());
+             }
+ 
++            // SAFETY: `fd` is the newly-created writable SHM file and `SHM_SIZE` is the exact non-negative mapping length; `rc` is checked.
+             let rc = unsafe { libc::ftruncate(fd, SHM_SIZE as libc::off_t) };
+             if rc != 0 {
+                 return Err(std::io::Error::last_os_error().into());
+@@ -171,6 +181,7 @@ impl ShmHandle {
+ 
+         std::fs::rename(&tmp_path, path)?;
+ 
++        // SAFETY: the newly-created file was truncated to exactly `SHM_SIZE`, matching the writable mapping length.
+         let mmap = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file)? };
+ 
+         Ok(Self {
+@@ -182,6 +193,7 @@ impl ShmHandle {
+     pub fn write(&mut self, telemetry: &mut TelemetryArchive) -> AuraResult<()> {
+         telemetry.checksum = 0;
+         telemetry.checksum = telemetry.calculate_checksum();
++        // SAFETY: `self.mmap` is a writable `SHM_SIZE` mapping with the expected header and archive buffers; `telemetry` is initialized.
+         unsafe {
+             write_double_buffer(self.mmap.as_mut_ptr(), telemetry);
+         }
+diff --git a/aura-daemon/tests/ipc_concurrent.rs b/aura-daemon/tests/ipc_concurrent.rs
+index f07f84b78a37b7cb6e2be50e3db8091eaa2110e2..a2620ca78b7180a24ae15c673b5ab4cb20491912 100644
+--- a/aura-daemon/tests/ipc_concurrent.rs
++++ b/aura-daemon/tests/ipc_concurrent.rs
+@@ -228,6 +228,7 @@ fn open_read_map(path: &std::path::Path) -> Mmap {
+         .read(true)
+         .open(path)
+         .expect("open shm for reader");
++    // SAFETY: `ShmHandle` created the file at `SHM_SIZE`, and the stress test never truncates it while readers map it.
+     unsafe {
+         MmapOptions::new()
+             .len(SHM_SIZE)
+@@ -244,6 +245,7 @@ fn read_snapshot_once(
+     let start = Instant::now();
+ 
+     loop {
++        // SAFETY: `mmap` covers the full SHM layout and the writer uses the same atomic double-buffer protocol.
+         let mut snapshot = match unsafe { read_double_buffer(mmap.as_ptr() as *mut u8) } {
+             Ok(snapshot) => snapshot,
+             Err(()) => {
+diff --git a/aura-daemon/tests/ipc_roundtrip.rs b/aura-daemon/tests/ipc_roundtrip.rs
+index f855375b9950ac88abfc43d8ab64397e0a1fd7e6..8dd95aca03ca44ccdd3f975eef005bc4fb639f4d 100644
+--- a/aura-daemon/tests/ipc_roundtrip.rs
++++ b/aura-daemon/tests/ipc_roundtrip.rs
+@@ -26,6 +26,7 @@ impl TelemetryReader {
+             }
+         })?;
+ 
++        // SAFETY: the SHM file is expected to be exactly `SHM_SIZE`; the read-only mapping length matches that layout.
+         let mmap = unsafe {
+             MmapOptions::new()
+                 .len(SHM_SIZE)
+@@ -40,6 +41,7 @@ impl TelemetryReader {
+     }
+ 
+     fn read(&self) -> AuraResult<TelemetryArchive> {
++        // SAFETY: `self.mmap` covers the full SHM layout and `read_double_buffer` only performs atomic reads from it.
+         unsafe {
+             read_double_buffer(self.mmap.as_ptr() as *mut u8)
+                 .map_err(|()| AuraError::SeqLockInvalid)
+@@ -67,6 +69,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
+         .write(true)
+         .open(&path)
+         .expect("open shm file for mmap validation");
++    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the read-only mapping length.
+     let mmap = unsafe {
+         MmapOptions::new()
+             .len(SHM_SIZE)
+@@ -74,6 +77,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
+             .expect("map shm file")
+     };
+ 
++    // SAFETY: the mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
+     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
+     let final_seq = header.seq[1].load(Ordering::Acquire);
+     let active = header.active_index.load(Ordering::Acquire);
+@@ -132,6 +136,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
+         .write(true)
+         .open(&path)
+         .expect("open shm for header manipulation");
++    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the writable mapping length.
+     let mut mmap = unsafe {
+         MmapOptions::new()
+             .len(SHM_SIZE)
+@@ -139,6 +144,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
+             .expect("mmap for header manipulation")
+     };
+ 
++    // SAFETY: the writable mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
+     let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
+ 
+     // After two writes: active=0, seq[0]=2, seq[1]=2
+@@ -180,6 +186,7 @@ fn reader_blocked_by_writer_on_same_buffer() {
+         .write(true)
+         .open(&path)
+         .expect("open shm for same-buffer test");
++    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the writable mapping length.
+     let mut mmap = unsafe {
+         MmapOptions::new()
+             .len(SHM_SIZE)
+@@ -187,6 +194,7 @@ fn reader_blocked_by_writer_on_same_buffer() {
+             .expect("mmap for same-buffer test")
+     };
+ 
++    // SAFETY: the writable mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
+     let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
+ 
+     // After first write: active=1, seq[1]=2
+@@ -219,6 +227,7 @@ fn double_buffer_writer_advances_header_state() {
+         .read(true)
+         .open(&path)
+         .expect("open shm file for header validation");
++    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the read-only mapping length.
+     let mmap = unsafe {
+         MmapOptions::new()
+             .len(SHM_SIZE)
+@@ -226,6 +235,7 @@ fn double_buffer_writer_advances_header_state() {
+             .expect("map shm file")
+     };
+ 
++    // SAFETY: the mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
+     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
+     assert_eq!(
+         header.seq[0].load(Ordering::Acquire),
+diff --git a/aura-daemon/tests/shm_permission_tests.rs b/aura-daemon/tests/shm_permission_tests.rs
+index 65ffa655c0e5e5f77d8594b6cc50e2aaaf8007a0..6e992dbde17d1851e6853025e7c7587303f97d56 100644
+--- a/aura-daemon/tests/shm_permission_tests.rs
++++ b/aura-daemon/tests/shm_permission_tests.rs
+@@ -22,8 +22,10 @@ fn shm_created_with_world_readable_permissions() {
+     let dir = tempfile::tempdir().unwrap();
+     let path = dir.path().join("aura_test_perms.dat");
+ 
++    // SAFETY: `umask` accepts any mode bits; this serial test restores the previous process mask immediately after creation.
+     let old = unsafe { libc::umask(0o077) };
+     let handle = ShmHandle::new(&path);
++    // SAFETY: `old` was returned by `umask`, so restoring it is valid.
+     unsafe { libc::umask(old) };
+ 
+     handle.unwrap();
+@@ -95,8 +97,10 @@ fn shm_permissions_survive_umask_077() {
+     let dir = tempfile::tempdir().unwrap();
+     let path = dir.path().join("aura_umask_077.dat");
+ 
++    // SAFETY: `umask` accepts any mode bits; this serial test restores the previous process mask immediately after creation.
+     let old = unsafe { libc::umask(0o077) };
+     let _handle = ShmHandle::new(&path).unwrap();
++    // SAFETY: `old` was returned by `umask`, so restoring it is valid.
+     unsafe { libc::umask(old) };
+ 
+     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+@@ -106,3 +110,27 @@ fn shm_permissions_survive_umask_077() {
+         mode
+     );
+ }
++
++#[cfg(target_os = "linux")]
++#[test]
++#[serial]
++fn shm_rejects_symlink_attack() {
++    let dir = tempfile::tempdir().unwrap();
++    let target = dir.path().join("real_file.dat");
++    let link = dir.path().join("aura_symlink.dat");
++
++    std::fs::write(&target, vec![0u8; SHM_SIZE]).unwrap();
++    std::os::unix::fs::symlink(&target, &link).unwrap();
++
++    match ShmHandle::new(&link) {
++        Ok(_) => panic!("Should reject symlink"),
++        Err(e) => {
++            let msg = e.to_string();
++            assert!(
++                msg.contains("symlink"),
++                "Error should mention symlink, got: {}",
++                msg
++            );
++        }
++    }
++}
