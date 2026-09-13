@@ -142,9 +142,12 @@ def _check_macos(
     for path in paths:
         name = os.path.basename(path)
         report = _run([file_tool, "-b", path], "macho file")
-        expected = f"Mach-O 64-bit {MACHO_ARCHES[arch]}"
-        if expected not in report:
-            raise VerifyError(f"{name}: expected {expected!r} in file report: {report!r}")
+        macho = MACHO_ARCHES[arch]
+        accepted = (f"Mach-O 64-bit {macho}", f"Mach-O 64-bit executable {macho}")
+        if not any(expected in report for expected in accepted):
+            raise VerifyError(
+                f"{name}: expected one of {accepted!r} in file report: {report!r}"
+            )
         if minos is not None:
             listing = _run([otool, "-l", path], "macho load commands")
             blocks = listing.split("Load command")

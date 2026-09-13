@@ -16,7 +16,10 @@ fn private_state_path() -> (TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
         .expect("private directory mode");
-    let path = dir.path().join("state.dat");
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let path = std::fs::canonicalize(dir.path())
+        .expect("canonical temp dir")
+        .join("state.dat");
     (dir, path)
 }
 

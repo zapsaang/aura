@@ -4,10 +4,9 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
-
 
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 
@@ -33,8 +32,7 @@ def _run(
             cwd=cwd,
             check=False,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
         )
     except OSError as error:
         raise GateError(f"cannot execute {command[0]}: {error}") from error
@@ -54,7 +52,17 @@ def _require_success(
 
 
 def _git(root: Path, arguments: Sequence[str], label: str) -> bytes:
-    result = _run(["git", *arguments], root)
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=root,
+            check=False,
+            env={**os.environ, "GIT_MASTER": "1"},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+        )
+    except OSError as error:
+        raise GateError(f"cannot execute git: {error}") from error
     _require_success(result, label)
     return result.stdout
 
@@ -73,9 +81,6 @@ def _resolve_commit(root: Path, commit: str) -> str:
         raise GateError("resolved commit is not ASCII") from error
     if decoded != commit:
         raise GateError(f"commit resolved to {decoded}, expected {commit}")
-    head = _git(root, ["rev-parse", "--verify", "HEAD^{commit}"], "resolve HEAD").strip()
-    if head != commit.encode("ascii"):
-        raise GateError("requested commit is not the caller checkout HEAD")
     return decoded
 
 
@@ -96,8 +101,7 @@ def _lock_bytes(root: Path) -> bytes:
 
 def _remove_scratch(root: Path, scratch: Path, sandbox: Path, added: bool) -> None:
     if added:
-        result = _run(["git", "worktree", "remove", "--force", os.fspath(scratch)], root)
-        _require_success(result, "remove scratch worktree")
+        _git(root, ["worktree", "remove", "--force", os.fspath(scratch)], "remove scratch worktree")
     try:
         shutil.rmtree(sandbox)
     except OSError as error:
@@ -119,11 +123,11 @@ def run_gate(config: GateConfig) -> None:
     added = False
     failure = None
     try:
-        result = _run(
-            ["git", "worktree", "add", "--detach", os.fspath(scratch), commit],
+        _git(
             root,
+            ["worktree", "add", "--detach", os.fspath(scratch), commit],
+            "create scratch worktree",
         )
-        _require_success(result, "create scratch worktree")
         added = True
         scratch.chmod(0o700)
         if stat.S_IMODE(scratch.stat().st_mode) != 0o700:

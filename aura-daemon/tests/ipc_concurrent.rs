@@ -53,7 +53,10 @@ fn ipc_concurrent_reader_writer_stress() {
         std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
             .expect("chmod test temp dir");
     }
-    let shm_path = temp_dir.path().join("aura-ipc-concurrent.dat");
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let shm_path = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("aura-ipc-concurrent.dat");
 
     let mut handle = ShmHandle::new(&shm_path).expect("create shm handle");
     let initial = make_archive(1);
@@ -354,7 +357,10 @@ fn writer_generations_increase_under_repeated_publications() {
         std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
             .expect("chmod test temp dir");
     }
-    let path = temp_dir.path().join("generation-state.dat");
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let path = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("generation-state.dat");
     let mut writer = ShmHandle::new(&path).expect("create writer");
     let file = OpenOptions::new().read(true).open(&path).unwrap();
     // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
@@ -392,7 +398,10 @@ fn concurrent_abandoned_sequence_recovery_never_returns_mixed_archive() {
         std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
             .expect("chmod test temp dir");
     }
-    let path = temp_dir.path().join("recovery-state.dat");
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let path = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("recovery-state.dat");
     let mut writer = ShmHandle::new(&path).expect("create writer");
     writer.write(&make_archive(300)).expect("seed old snapshot");
     let file = OpenOptions::new()
@@ -446,7 +455,10 @@ fn ipc_multiprocess_release_stress_uses_atomic_protocol() {
         std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
             .expect("chmod test temp dir");
     }
-    let state = temp_dir.path().join("multiprocess-state.dat");
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let state = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("multiprocess-state.dat");
     let writer_ready = temp_dir.path().join("writer.ready");
     let reader_ready = temp_dir.path().join("reader.ready");
     let start = temp_dir.path().join("start");

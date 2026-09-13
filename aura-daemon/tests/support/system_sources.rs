@@ -63,6 +63,10 @@ impl CollectorSources for DeterministicSources {
         _scratch: &mut CollectorScratch,
     ) -> AuraResult<CpuAvailability> {
         self.calls[0] += 1;
+        // Linux-only: `collectors::cpu::linux` is cfg(linux)-gated, and the only
+        // caller that sets this flag is itself a cfg(linux) test, so this branch
+        // is dead on macOS.
+        #[cfg(target_os = "linux")]
         if self.over_capacity_cpu_fixture {
             return aura_daemon::collectors::cpu::linux::collect_from_bytes(
                 include_bytes!("../fixtures/proc_stat_129_cores.txt"),

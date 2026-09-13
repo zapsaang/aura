@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render dist/homebrew/aura.rb from deployment/homebrew/aura.rb.in.
 
-Pure offline substitution: replaces {VERSION}, {TAG}, and the four
+Pure offline substitution: replaces {TAG} and the four
 {SHA256_*} placeholders with validated runtime inputs and writes the result
 byte-deterministically (same tag/SHA inputs always produce the same bytes).
 Fails on any missing or unresolved placeholder; performs no network access.
@@ -31,7 +31,7 @@ class RenderError(RuntimeError):
 def _validated(tag: str, shas: dict[str, str]) -> dict[str, str]:
     if TAG_PATTERN.fullmatch(tag) is None:
         raise RenderError(f"tag {tag!r} is not a canonical vMAJOR.MINOR.PATCH tag")
-    values = {"VERSION": tag[1:], "TAG": tag}
+    values = {"TAG": tag}
     for key, value in shas.items():
         if SHA_PATTERN.fullmatch(value) is None:
             raise RenderError(f"{key} is not 64 lowercase hex characters")

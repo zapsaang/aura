@@ -13,7 +13,11 @@ use tempfile::TempDir;
 
 fn trusted_temp_dir() -> TempDir {
     use std::os::unix::fs::PermissionsExt;
-    let dir = TempDir::new().expect("create temp dir");
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let base = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp base");
+    let dir = tempfile::Builder::new()
+        .tempdir_in(base)
+        .expect("create temp dir");
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
         .expect("chmod test temp dir");
     dir

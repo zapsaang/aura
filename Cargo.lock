@@ -102,6 +102,7 @@ dependencies = [
 name = "aura-daemon"
 version = "1.0.0"
 dependencies = [
+ "aura-cli",
  "aura-common",
  "clap",
  "criterion",
@@ -110,6 +111,7 @@ dependencies = [
  "log",
  "memmap2",
  "nvml-wrapper",
+ "serde_json",
  "serial_test",
  "tempfile",
  "time",

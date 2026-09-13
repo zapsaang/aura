@@ -33,3 +33,9 @@ __pycache__/
 # Narrow private ignores
 shell.nix
 opencode.json
+
+# CI release workflow artifacts (lane cleanliness gate must not see these).
+/artifacts/
+/dist/
+/aura-*.tar.gz
+/aura-*.tar.gz.sha256
