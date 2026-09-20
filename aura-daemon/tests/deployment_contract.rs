@@ -154,10 +154,8 @@ fn home_manager_version_follows_workspace_manifest() {
     assert!(nix.contains("workspace.package.version"));
     let manifest = read("Cargo.toml");
     let workspace = section(&manifest, "[workspace.package]");
-    assert!(
-        workspace.contains("version = \"1.0.1\""),
-        "workspace version drifted"
-    );
+    let expected = format!("version = \"{}\"", env!("CARGO_PKG_VERSION"));
+    assert!(workspace.contains(&expected), "workspace version drifted");
 }
 
 #[test]
