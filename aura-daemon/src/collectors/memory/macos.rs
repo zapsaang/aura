@@ -2,8 +2,8 @@ use aura_common::{AuraError, AuraResult, MemoryStats};
 
 use super::MemoryAvailability;
 
-/// Exact integer_t lane count the kernel must report for the
-/// HOST_VM_INFO64 flavor; any other count is a count/struct mismatch.
+/// Known integer_t lane count for the HOST_VM_INFO64 struct. Kernels may
+/// report additional lanes, which collectors ignore.
 pub const HOST_VM_INFO64_COUNT: u32 = 38;
 
 pub const SYSCTL_HW_MEMSIZE: &[u8] = b"hw.memsize";
@@ -83,7 +83,10 @@ pub fn collect_memory_from_probe<P: MacosMemoryProbe + ?Sized>(
     let (count, lanes) = probe
         .vm_info64()
         .map_err(|code| fatal(format!("host_statistics64 failed: kern_return_t {code}")))?;
-    if count != HOST_VM_INFO64_COUNT || lanes.len() < HOST_VM_INFO64_COUNT as usize {
+    let usable = (count as usize)
+        .min(lanes.len())
+        .min(HOST_VM_INFO64_COUNT as usize);
+    if usable < VM_STAT64_FAULTS_LANE + 2 {
         return Err(fatal(format!(
             "host_statistics64 HOST_VM_INFO64 count mismatch: {count}"
         )));
