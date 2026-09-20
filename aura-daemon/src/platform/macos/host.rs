@@ -8,6 +8,9 @@ use crate::collectors::network::macos::MacosNetworkProbe;
 use super::ffi;
 use super::MacPorts;
 
+/// Maximum host info lanes defined by XNU's <mach/host_info.h>.
+const HOST_INFO_MAX: usize = 1024;
+
 /// Per-cycle host handle: copies the init-time cached Mach ports, holds the
 /// lock on the one fixed init-time NET_RT_IFLIST2 routing buffer, and owns
 /// every transient kernel buffer acquired during the cycle. Each acquired
@@ -17,7 +20,7 @@ pub(crate) struct MacosHost {
     ports: MacPorts,
     iflist2: MutexGuard<'static, Vec<u8>>,
     cpu_info: Option<MachInfo>,
-    vm_buf: [i32; 64],
+    vm_buf: [i32; HOST_INFO_MAX],
 }
 
 impl MacosHost {
@@ -26,7 +29,7 @@ impl MacosHost {
             ports,
             iflist2,
             cpu_info: None,
-            vm_buf: [0; 64],
+            vm_buf: [0; HOST_INFO_MAX],
         }
     }
 }

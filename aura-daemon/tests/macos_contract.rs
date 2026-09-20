@@ -383,12 +383,38 @@ fn memory_happy_path_maps_all_fields() {
 }
 
 #[test]
-fn memory_vm_info_count_mismatch_is_fatal() {
+fn memory_vm_info_partial_known_struct_is_valid() {
+    let mut lanes = vm_lanes(11, 22, 33, 44, 55);
+    lanes.truncate((HOST_VM_INFO64_COUNT - 1) as usize);
     let mut probe = memory_probe(1, Ok(swap_bytes(8, 5, 3)));
-    probe.vm = Ok((HOST_VM_INFO64_COUNT - 1, vm_lanes(1, 2, 3, 4, 1)));
+    probe.vm = Ok((HOST_VM_INFO64_COUNT - 1, lanes));
+    let mut out = TelemetryArchive::zeroed().memory;
+    collect_memory_from_probe(&mut probe, &mut out).expect("partial VM info");
+    assert_eq!(out.ram_free, 11 * 4096);
+    assert_eq!(out.cached, 33 * 4096);
+    assert_eq!(out.page_faults, 55);
+}
+
+#[test]
+fn memory_vm_info_truncated_before_faults_is_fatal() {
+    let mut probe = memory_probe(1, Ok(swap_bytes(8, 5, 3)));
+    probe.vm = Ok((13, vec![0i32; 13]));
     let mut out = TelemetryArchive::zeroed().memory;
     let error = assert_fatal(collect_memory_from_probe(&mut probe, &mut out));
     assert!(error.to_string().contains("HOST_VM_INFO64"));
+}
+
+#[test]
+fn memory_vm_info_extended_kernel_count_ignores_unknown_lanes() {
+    let mut lanes = vm_lanes(17, 23, 31, 47, 0x0123_4567_89ab_cdef);
+    lanes.extend_from_slice(&[0x1357_2468, 0x2468_1357]);
+    let mut probe = memory_probe(1, Ok(swap_bytes(8, 5, 3)));
+    probe.vm = Ok((40, lanes));
+    let mut out = TelemetryArchive::zeroed().memory;
+    collect_memory_from_probe(&mut probe, &mut out).expect("extended VM info");
+    assert_eq!(out.ram_free, 17 * 4096);
+    assert_eq!(out.cached, 31 * 4096);
+    assert_eq!(out.page_faults, 0x0123_4567_89ab_cdef);
 }
 
 #[test]
