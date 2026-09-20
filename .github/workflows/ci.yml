@@ -8,195 +8,198 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: lint
-    runs-on: ubuntu-latest
+  compliance-contracts:
+    name: compliance-contracts
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Init env
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
-          echo 'DPkg::TriggersPending "false";' \
-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
+      - name: Verify evidence helper unit tests
+        run: python3 -B -m unittest discover -s scripts/tests -v
 
-          sudo -E apt-get -qq update
+      - name: Verify generated F1 contract
+        run: >-
+          python3 scripts/generate-f1-compliance-contract.py
+          --registry qa/compliance-qa-registry.json
+          --matrix aura-daemon/tests/fixtures/compliance-matrix.json
+          --out qa/f1-compliance-contract.json
+          --check
 
-          sudo -E apt-get install -y --no-install-recommends \
-            build-essential \
-            protobuf-compiler \
-            libacl1-dev \
-            libssl-dev \
-            pkg-config
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
+          toolchain: '1.85.0'
           components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
 
       - name: cargo fmt (check)
         run: cargo fmt --all -- --check
 
       - name: cargo clippy (-D warnings)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+  msrv:
+    name: ubuntu-msrv
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.70.0'
+
+      - name: cargo check (MSRV 1.70, locked)
+        run: cargo +1.70.0 check --workspace --locked
 
   test-common:
     name: test-aura-common
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Init env
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
-          echo 'DPkg::TriggersPending "false";' \
-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
-
-          sudo -E apt-get -qq update
-
-          sudo -E apt-get install -y --no-install-recommends \
-            build-essential \
-            libssl-dev \
-            pkg-config
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test -p aura-common
-        run: cargo test -p aura-common
+        run: cargo test -p aura-common --locked
 
   test-daemon:
     name: test-aura-daemon
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Init env
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
-          echo 'DPkg::TriggersPending "false";' \
-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
-
-          sudo -E apt-get -qq update
-
-          sudo -E apt-get install -y --no-install-recommends \
-            build-essential \
-            libssl-dev \
-            pkg-config
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test -p aura-daemon
-        run: cargo test -p aura-daemon
+        run: cargo test -p aura-daemon --locked
 
   test-cli:
     name: test-aura-cli
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Init env
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
-          echo 'DPkg::TriggersPending "false";' \
-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
-
-          sudo -E apt-get -qq update
-
-          sudo -E apt-get install -y --no-install-recommends \
-            build-essential \
-            libssl-dev \
-            pkg-config
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test -p aura-cli
-        run: cargo test -p aura-cli
+        run: cargo test -p aura-cli --locked
 
   test-workspace:
     name: test-workspace
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Init env
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          echo 'DPkg::Post-Invoke { "rm -f /var/lib/dpkg/triggers/* 2>/dev/null || true"; };' \
-            | sudo tee /etc/apt/apt.conf.d/99no-triggers > /dev/null
-          echo 'DPkg::TriggersPending "false";' \
-            | sudo tee -a /etc/apt/apt.conf.d/99no-triggers > /dev/null
-
-          sudo -E apt-get -qq update
-
-          sudo -E apt-get install -y --no-install-recommends \
-            build-essential \
-            libssl-dev \
-            pkg-config
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test --workspace
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+
+  test-release:
+    name: test-release-build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
+
+      - name: cargo test --workspace --release
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --workspace --release --locked
 
   test-macos:
     name: test-macos
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: '1.85.0'
 
       - name: cargo test --workspace
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      - name: cargo check --all-features (Darwin, locked)
+        run: cargo +1.85.0 check --workspace --all-features --locked
+
+  home-manager-semantic:
+    name: home-manager-semantic
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+
+      - name: Execute and seal home-manager-semantic lane
+        run: >-
+          python3 scripts/run-compliance-lane.py
+          --job home-manager-semantic
+          --lane .omo/evidence/design-compliance-remediation/lane/home-manager-semantic
+          --archive .omo/evidence/design-compliance-remediation/lanes/home-manager-semantic.tar.gz
+          --registry qa/compliance-qa-registry.json
+          --run-id '${{ github.run_id }}'
+          --run-attempt '${{ github.run_attempt }}'
+          --verified-commit '${{ github.sha }}'
+          --runner ubuntu-24.04
+          --target x86_64-linux
+          --nix "$(nix --version)"
+
+      - name: Bind lane artifact name to content digest
+        id: lane-digest
+        run: echo "sha256=$(sha256sum .omo/evidence/design-compliance-remediation/lanes/home-manager-semantic.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload content-addressed lane archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aura-lane-home-manager-semantic-${{ steps.lane-digest.outputs.sha256 }}
+          path: .omo/evidence/design-compliance-remediation/lanes/home-manager-semantic.tar.gz
+          if-no-files-found: error

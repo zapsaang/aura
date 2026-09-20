@@ -1,23 +1,25 @@
 use std::fs::File;
-use std::io::Read;
-use std::sync::OnceLock;
 
-use aura_common::{AuraResult, FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
-use log::warn;
+use aura_common::{AuraError, AuraResult, FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
 
-use crate::collectors::parsing::{parse_u64, split_whitespace, trim_ascii};
-use crate::collectors::NetByteSnapshot;
+use crate::collectors::parsing::{parse_u64_strict, read_reused, split_whitespace, trim_ascii};
 
-static NETIF_LIMIT_WARNED: OnceLock<()> = OnceLock::new();
-
-pub fn parse_net_dev(
-    buf: &[u8],
-    interfaces_out: &mut [NetIfStat; MAX_NETIFS],
-    count_out: &mut u8,
-) -> AuraResult<()> {
+pub fn parse_net_dev(buf: &[u8], out: &mut NetworkStats) -> AuraResult<()> {
+    let mut headers = buf.split(|byte| *byte == b'\n');
+    let first = headers.next().unwrap_or_default();
+    let second = headers.next().unwrap_or_default();
+    if !first.starts_with(b"Inter-|")
+        || !trim_ascii(second).starts_with(b"face |")
+        || !contains_bytes(second, b"bytes")
+    {
+        return Err(AuraError::ParseError(
+            "malformed /proc/net/dev headers".to_string(),
+        ));
+    }
     let mut count = 0usize;
     let mut line_start = 0usize;
     let mut line_no = 0usize;
+    out.truncated = 0;
 
     for i in 0..buf.len() {
         if buf[i] != b'\n' {
@@ -30,18 +32,11 @@ pub fn parse_net_dev(
         if line_no <= 2 {
             continue;
         }
-        if count >= MAX_NETIFS && NETIF_LIMIT_WARNED.get().is_none() {
-            warn!(
-                "Network interface limit reached: {} interfaces detected (MAX_NETIFS={}). \
-                Some interfaces will not be monitored.",
-                line_no.saturating_sub(2),
-                MAX_NETIFS
-            );
-            NETIF_LIMIT_WARNED.set(()).ok();
-            break;
-        }
 
         let Some(colon) = line.iter().position(|&c| c == b':') else {
+            if !trim_ascii(line).is_empty() {
+                out.truncated = 1;
+            }
             continue;
         };
 
@@ -49,20 +44,22 @@ pub fn parse_net_dev(
         if name == b"lo" || name.starts_with(b"docker") || name.starts_with(b"veth") {
             continue;
         }
-
-        let values = trim_ascii(&line[colon + 1..]);
-        let mut rx = 0u64;
-        let mut tx = 0u64;
-        for (idx, tok) in split_whitespace(values).enumerate() {
-            if idx == 0 {
-                rx = parse_u64(tok).unwrap_or(0);
-            } else if idx == 8 {
-                tx = parse_u64(tok).unwrap_or(0);
-                break;
-            }
+        if name.is_empty() {
+            out.truncated = 1;
+            continue;
         }
 
-        interfaces_out[count] = NetIfStat {
+        let values = trim_ascii(&line[colon + 1..]);
+        let Ok((rx, tx)) = parse_interface_counters(values) else {
+            out.truncated = 1;
+            continue;
+        };
+
+        if count >= MAX_NETIFS {
+            out.truncated = 1;
+            break;
+        }
+        out.interfaces[count] = NetIfStat {
             name: FixedString16::from_bytes(name),
             rx_bytes: rx,
             tx_bytes: tx,
@@ -72,66 +69,82 @@ pub fn parse_net_dev(
         count += 1;
     }
 
-    *count_out = count as u8;
+    out.if_count = count as u8;
     Ok(())
 }
 
-pub fn collect(
-    buf: &mut Vec<u8>,
-    out: &mut NetworkStats,
-    prev: &mut NetByteSnapshot,
-    delta_secs: f64,
-) -> AuraResult<()> {
+fn parse_interface_counters(values: &[u8]) -> AuraResult<(u64, u64)> {
+    let mut rx = None;
+    let mut tx = None;
+    let mut count = 0usize;
+    for (index, token) in split_whitespace(values).take(9).enumerate() {
+        let value = parse_u64_strict(token)?;
+        count += 1;
+        if index == 0 {
+            rx = Some(value);
+        } else if index == 8 {
+            tx = Some(value);
+        }
+    }
+    if count < 9 {
+        return Err(AuraError::ParseError(
+            "malformed /proc/net/dev interface row".to_string(),
+        ));
+    }
+    match (rx, tx) {
+        (Some(rx), Some(tx)) => Ok((rx, tx)),
+        _ => Err(AuraError::ParseError(
+            "malformed /proc/net/dev interface row".to_string(),
+        )),
+    }
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+pub fn collect(buf: &mut Vec<u8>, out: &mut NetworkStats) -> AuraResult<()> {
     buf.clear();
     let mut f = File::open("/proc/net/dev")?;
-    f.read_to_end(buf)?;
-    parse_net_dev(&buf[..], &mut out.interfaces, &mut out.if_count)?;
-
-    let count = out.if_count as usize;
-    let mut i = 0usize;
-    while i < count && i < MAX_NETIFS {
-        let rx = out.interfaces[i].rx_bytes;
-        let tx = out.interfaces[i].tx_bytes;
-        let (prx, ptx) = prev.interfaces[i];
-        out.interfaces[i].rx_bytes_per_sec = if delta_secs > 0.0 {
-            (rx.saturating_sub(prx) as f64 / delta_secs) as f32
-        } else {
-            0.0
-        };
-        out.interfaces[i].tx_bytes_per_sec = if delta_secs > 0.0 {
-            (tx.saturating_sub(ptx) as f64 / delta_secs) as f32
-        } else {
-            0.0
-        };
-        prev.interfaces[i] = (rx, tx);
-        i += 1;
-    }
-    prev.count = count;
+    read_reused(&mut f, buf)?;
+    parse_net_dev(&buf[..], out)?;
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use aura_common::{NetIfStat, MAX_NETIFS};
+    use aura_common::{FixedString16, NetIfStat, NetworkStats, MAX_NETIFS};
 
     use super::parse_net_dev;
+
+    fn empty_stats() -> NetworkStats {
+        NetworkStats {
+            interfaces: [NetIfStat {
+                name: FixedString16::new(),
+                rx_bytes: 0,
+                tx_bytes: 0,
+                rx_bytes_per_sec: 0.0,
+                tx_bytes_per_sec: 0.0,
+            }; MAX_NETIFS],
+            if_count: 0,
+            truncated: 0,
+            _pad0: [0; 6],
+        }
+    }
 
     #[test]
     fn parse_net_dev_sample() {
         let fixture = include_bytes!("../../../tests/fixtures/proc_net_dev_sample.txt");
-        let mut interfaces = [NetIfStat {
-            name: aura_common::FixedString16::new(),
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_bytes_per_sec: 0.0,
-            tx_bytes_per_sec: 0.0,
-        }; MAX_NETIFS];
-        let mut count = 0u8;
-        parse_net_dev(fixture, &mut interfaces, &mut count).expect("parse");
-        assert_eq!(count, 1);
-        assert_eq!(interfaces[0].name.as_str(), "eth0");
-        assert_eq!(interfaces[0].rx_bytes, 5678);
-        assert_eq!(interfaces[0].tx_bytes, 8765);
+        let mut stats = empty_stats();
+        stats.truncated = 1;
+        parse_net_dev(fixture, &mut stats).expect("parse");
+        assert_eq!(stats.if_count, 1);
+        assert_eq!(stats.truncated, 0);
+        assert_eq!(stats.interfaces[0].name.as_str(), "eth0");
+        assert_eq!(stats.interfaces[0].rx_bytes, 5678);
+        assert_eq!(stats.interfaces[0].tx_bytes, 8765);
     }
 }

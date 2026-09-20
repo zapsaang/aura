@@ -1,16 +1,16 @@
 #[test]
-fn test_collect_all_has_no_cfg_macros_in_body() {
+fn test_collect_sample_has_no_cfg_macros_in_body() {
     let source = include_str!("../src/collectors/mod.rs");
 
     let fn_start = source
-        .find("pub fn collect_all")
-        .expect("collect_all not found");
+        .find("pub fn collect_sample")
+        .expect("collect_sample not found");
     let fn_end_rel = source[fn_start..].find("\n}\n").expect("fn end not found");
     let fn_body = &source[fn_start..fn_start + fn_end_rel];
 
     assert!(
         !fn_body.contains("#[cfg"),
-        "collect_all should not contain #[cfg] blocks"
+        "collect_sample should not contain #[cfg] blocks"
     );
 }
 

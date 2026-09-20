@@ -2,6 +2,7 @@
 name = "aura-daemon"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [features]
 default = []
@@ -13,13 +14,18 @@ clap = { workspace = true, features = ["derive"] }
 env_logger = { workspace = true }
 log = { workspace = true }
 memmap2 = { workspace = true }
+libc = { workspace = true }
+time = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 nvml-wrapper = { workspace = true, optional = true }
-libc = "0.2"
 
 [dev-dependencies]
-serial_test = "3"
-tempfile = "3"
-criterion = { version = "0.5", features = ["html_reports"] }
+aura-cli = { path = "../aura-cli" }
+serde_json = { workspace = true }
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+criterion = { workspace = true, features = ["html_reports"] }
 
 [[bench]]
 name = "collectors"

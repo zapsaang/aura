@@ -1,0 +1,6 @@
+# The crates.io-pinned cross 0.2.5 image for aarch64 is Ubuntu 16.04
+# (glibc 2.23), which predates the getrandom(2)/renameat2(2) symbols the
+# daemon links. Pin the maintained Ubuntu 24.04 image so the arm64 release
+# lane links.
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"

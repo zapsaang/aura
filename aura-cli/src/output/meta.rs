@@ -1,90 +1,99 @@
-use aura_common::TelemetryArchive;
+use aura_common::{
+    bytes_to_string, TelemetryArchive, CAP_META_LOAD_AVERAGE, CAP_META_OS_CODENAME,
+    CAP_META_OS_IDENTITY, CAP_META_OS_VERSION, CAP_META_OS_VERSION_ID, CAP_META_TIMEZONE,
+    CAP_META_UPTIME, CAP_META_WALLCLOCK,
+};
 
-use crate::ColorMode;
+use crate::args::ColorMode;
 
-use super::{ansi, trim_zero_terminated};
+use super::color::NA;
 
-pub fn os_logo(os_id: &str, os_type: &str) -> &'static str {
-    if os_type == "darwin" {
-        return ""; // Apple Logo (\uf302)
-    }
-
-    match os_id {
-        "ubuntu" => "",                                             // \uf31b
-        "debian" => "",                                             // \uf306
-        "arch" => "",                                               // \uf303
-        "fedora" => "",                                             // \uf30a
-        "rhel" => "",                                               // \uf316
-        "centos" => "",                                             // \uf304
-        "rocky" => "",                                              // \uf32b
-        "alma" => "",                                               // AlmaLinux
-        "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" => "", // \uf314
-        "gentoo" => "",                                             // \uf30d
-        "alpine" => "",                                             // \uf300
-        "nixos" => "",                                              // \uf313
-        "void" => "",                                               // \uf322
-        "linuxmint" | "mint" => "",                                 // \uf30e
-        "manjaro" => "",                                            // \uf312
-        "endeavouros" => "",                                        // \uf323
-        "pop" | "pop_os" => "",                                     // \uf32a
-        "zorin" => "",                                              // \uf32f
-        "kali" => "",                                               // \uf327
-        "raspbian" => "",                                           // \uf315
-        "amzn" => "",                                               // Amazon (\uf270)
-
-        "ol" | "oracle" | "flatcar" | "coreos" | "container-linux" | "clearlinux" | "photon"
-        | "sles" => "", // \uf31a
-
-        _ => "",
+fn token(out: &mut String, label: &str, owned: bool, rendered: String) {
+    out.push_str(label);
+    if owned {
+        out.push_str(&rendered);
+    } else {
+        out.push_str(NA);
     }
 }
 
-pub fn render(color: ColorMode, telemetry: &TelemetryArchive) -> String {
-    let meta = &telemetry.meta;
-    let tz = trim_zero_terminated(&meta.timezone_name);
-    let os_type = meta.os.os_type.as_str();
-    let os_id = meta.os.os_id.as_str();
-    let pretty = trim_zero_terminated(&meta.os.os_pretty_name);
+pub fn render(_color: ColorMode, t: &TelemetryArchive) -> String {
+    let caps = t.capabilities;
+    let m = &t.meta;
+    let mut out = String::from("META\n");
 
-    let mut out = String::new();
-    out.push_str(&ansi::style(color, ansi::BOLD, "=== META ==="));
-    out.push('\n');
-    out.push_str(&format!(
-        "OS: {} {} ({})",
-        os_logo(os_id, os_type),
-        if pretty.is_empty() {
-            "unknown"
-        } else {
-            &pretty
-        },
-        os_type
-    ));
-    out.push('\n');
-    out.push_str(&format!(
-        "Uptime: {}s  Load: {:.2} {:.2} {:.2}",
-        meta.uptime_secs, meta.load_avg_1m, meta.load_avg_5m, meta.load_avg_15m
-    ));
-    out.push('\n');
-    out.push_str(&format!("Timezone: {} ({})", tz, meta.timezone_offset_secs));
+    token(
+        &mut out,
+        "  wallclock_ns: ",
+        caps & CAP_META_WALLCLOCK != 0,
+        m.wallclock_ns.to_string(),
+    );
+    token(
+        &mut out,
+        "\n  uptime: ",
+        caps & CAP_META_UPTIME != 0,
+        format!("{}s", m.uptime_secs),
+    );
 
-    for idx in 0..telemetry.gpu.gpu_count as usize {
-        let gpu = &telemetry.gpu.gpus[idx];
-        out.push('\n');
+    out.push_str("\n  load: ");
+    if caps & CAP_META_LOAD_AVERAGE != 0 {
         out.push_str(&format!(
-            "GPU {}: util={} temp={}",
-            gpu.name.as_str(),
-            ansi::fmt_pct(
-                color,
-                gpu.utilization_percent,
-                ansi::cpu_color(gpu.utilization_percent)
-            ),
-            ansi::paint(
-                color,
-                &format!("{}C", gpu.temperature_celsius),
-                ansi::temperature_color(gpu.temperature_celsius)
-            )
+            "{:.2} {:.2} {:.2}",
+            m.load_avg_1m, m.load_avg_5m, m.load_avg_15m
         ));
+    } else {
+        out.push_str(NA);
+        out.push(' ');
+        out.push_str(NA);
+        out.push(' ');
+        out.push_str(NA);
     }
+
+    out.push_str("\n  timezone: ");
+    if caps & CAP_META_TIMEZONE != 0 {
+        out.push_str(&format!(
+            "{} ({})",
+            bytes_to_string(&m.timezone_name),
+            m.timezone_offset_secs
+        ));
+    } else {
+        out.push_str(NA);
+        out.push_str(" (");
+        out.push_str(NA);
+        out.push(')');
+    }
+
+    out.push_str("\n  os: ");
+    let identity = caps & CAP_META_OS_IDENTITY != 0;
+    if identity {
+        out.push_str(&bytes_to_string(&m.os.os_pretty_name));
+    } else {
+        out.push_str(NA);
+    }
+    out.push_str(" id=");
+    if identity {
+        out.push_str(m.os.os_id.as_str());
+    } else {
+        out.push_str(NA);
+    }
+    token(
+        &mut out,
+        " version=",
+        caps & CAP_META_OS_VERSION != 0,
+        bytes_to_string(&m.os.version),
+    );
+    token(
+        &mut out,
+        " version_id=",
+        caps & CAP_META_OS_VERSION_ID != 0,
+        m.os.os_version_id.as_str().to_string(),
+    );
+    token(
+        &mut out,
+        " codename=",
+        caps & CAP_META_OS_CODENAME != 0,
+        m.os.version_codename.as_str().to_string(),
+    );
 
     out
 }

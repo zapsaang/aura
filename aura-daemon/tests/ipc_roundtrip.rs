@@ -1,4 +1,5 @@
 use std::fs::OpenOptions;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -10,10 +11,31 @@ use aura_daemon::state::ShmHandle;
 use memmap2::{Mmap, MmapOptions};
 use tempfile::TempDir;
 
+fn trusted_temp_dir() -> TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let base = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp base");
+    let dir = tempfile::Builder::new()
+        .tempdir_in(base)
+        .expect("create temp dir");
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("chmod test temp dir");
+    dir
+}
+
 struct TelemetryReader {
     mmap: Mmap,
     #[allow(dead_code)]
     path: PathBuf,
+}
+
+fn checksum_offset() -> usize {
+    let uninit = MaybeUninit::<TelemetryArchive>::uninit();
+    let base = uninit.as_ptr();
+    // SAFETY: `addr_of!` forms a raw field pointer without reading the
+    // uninitialized archive, and both pointers share one allocation.
+    let field = unsafe { std::ptr::addr_of!((*base).checksum) };
+    field as usize - base as usize
 }
 
 impl TelemetryReader {
@@ -26,6 +48,7 @@ impl TelemetryReader {
             }
         })?;
 
+        // SAFETY: the SHM file is expected to be exactly `SHM_SIZE`; the read-only mapping length matches that layout.
         let mmap = unsafe {
             MmapOptions::new()
                 .len(SHM_SIZE)
@@ -40,22 +63,20 @@ impl TelemetryReader {
     }
 
     fn read(&self) -> AuraResult<TelemetryArchive> {
-        unsafe {
-            read_double_buffer(self.mmap.as_ptr() as *mut u8)
-                .map_err(|()| AuraError::SeqLockInvalid)
-        }
+        // SAFETY: `self.mmap` covers the full SHM layout and `read_double_buffer` only performs atomic reads from it.
+        unsafe { read_double_buffer(self.mmap.as_ptr()) }
     }
 }
 
 #[test]
 fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-ipc-roundtrip.dat");
 
-    let mut expected = sample_archive();
+    let expected = sample_archive();
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
-    shm.write(&mut expected).expect("write telemetry snapshot");
+    shm.write(&expected).expect("write telemetry snapshot");
 
     let reader = TelemetryReader::new(&path).expect("open telemetry reader");
     let actual = reader.read().expect("read telemetry snapshot");
@@ -67,6 +88,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
         .write(true)
         .open(&path)
         .expect("open shm file for mmap validation");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the read-only mapping length.
     let mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -74,6 +96,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
             .expect("map shm file")
     };
 
+    // SAFETY: the mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
     let final_seq = header.seq[1].load(Ordering::Acquire);
     let active = header.active_index.load(Ordering::Acquire);
@@ -91,7 +114,7 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
     } else {
         BUFFER_1_OFFSET
     };
-    let checksum_offset = active_offset + std::mem::offset_of!(TelemetryArchive, checksum);
+    let checksum_offset = active_offset + checksum_offset();
     let stored_checksum = u32::from_le_bytes([
         mmap[checksum_offset],
         mmap[checksum_offset + 1],
@@ -113,17 +136,19 @@ fn ipc_roundtrip_write_with_daemon_read_with_cli_reader() {
 /// actively writing to buffer 1 (false contention bug).
 #[test]
 fn reader_not_blocked_by_writer_on_other_buffer() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-false-contention.dat");
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
 
     // Write twice to cycle: first write->buffer1(active=1), second write->buffer0(active=0)
     let mut archive = sample_archive();
-    archive.version = 42;
-    shm.write(&mut archive).expect("first write to buffer 1");
-    archive.version = 43;
-    shm.write(&mut archive).expect("second write to buffer 0");
+    archive.meta.timestamp_ns = 42;
+    refresh_checksum(&mut archive);
+    shm.write(&archive).expect("first write to buffer 1");
+    archive.meta.timestamp_ns = 43;
+    refresh_checksum(&mut archive);
+    shm.write(&archive).expect("second write to buffer 0");
 
     // Manipulate header to simulate false contention:
     // active=0 (reader reads buffer 0), seq[0]=2 (valid), seq[1]=1 (writer on buffer 1)
@@ -132,6 +157,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
         .write(true)
         .open(&path)
         .expect("open shm for header manipulation");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the writable mapping length.
     let mut mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -139,6 +165,7 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
             .expect("mmap for header manipulation")
     };
 
+    // SAFETY: the writable mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
 
     // After two writes: active=0, seq[0]=2, seq[1]=2
@@ -159,27 +186,29 @@ fn reader_not_blocked_by_writer_on_other_buffer() {
         result.is_ok(),
         "reader reading buffer 0 should succeed even when writer is mid-write to buffer 1"
     );
-    assert_eq!(result.unwrap().version, 43);
+    assert_eq!(result.unwrap().meta.timestamp_ns, 43);
 }
 
 /// Verifies that with per-buffer seq, reader IS blocked when writer
 /// is actively writing to the SAME buffer the reader is reading.
 #[test]
 fn reader_blocked_by_writer_on_same_buffer() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-same-buffer-contention.dat");
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
 
     let mut archive = sample_archive();
     archive.version = 77;
-    shm.write(&mut archive).expect("seed archive");
+    refresh_checksum(&mut archive);
+    shm.write(&archive).expect("seed archive");
 
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .open(&path)
         .expect("open shm for same-buffer test");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the writable mapping length.
     let mut mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -187,6 +216,7 @@ fn reader_blocked_by_writer_on_same_buffer() {
             .expect("mmap for same-buffer test")
     };
 
+    // SAFETY: the writable mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut DoubleBufferHeader) };
 
     // After first write: active=1, seq[1]=2
@@ -207,18 +237,19 @@ fn reader_blocked_by_writer_on_same_buffer() {
 
 #[test]
 fn double_buffer_writer_advances_header_state() {
-    let tmp = TempDir::new().expect("create temp dir");
+    let tmp = trusted_temp_dir();
     let path = tmp.path().join("aura-ipc-header-state.dat");
-    let mut expected = sample_archive();
+    let expected = sample_archive();
 
     let mut shm = ShmHandle::new(&path).expect("create shm handle");
-    shm.write(&mut expected).expect("write snapshot");
-    shm.write(&mut expected).expect("write second snapshot");
+    shm.write(&expected).expect("write snapshot");
+    shm.write(&expected).expect("write second snapshot");
 
     let file = OpenOptions::new()
         .read(true)
         .open(&path)
         .expect("open shm file for header validation");
+    // SAFETY: `ShmHandle` created and sized the file to `SHM_SIZE`, matching the read-only mapping length.
     let mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -226,6 +257,7 @@ fn double_buffer_writer_advances_header_state() {
             .expect("map shm file")
     };
 
+    // SAFETY: the mapping covers `SHM_SIZE` bytes and starts with an aligned `DoubleBufferHeader`.
     let header = unsafe { &*(mmap.as_ptr() as *const DoubleBufferHeader) };
     assert_eq!(
         header.seq[0].load(Ordering::Acquire),
@@ -238,6 +270,157 @@ fn double_buffer_writer_advances_header_state() {
         "buffer 1: 0->1->2 after first write"
     );
     assert_eq!(header.active_index.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn restart_recovers_abandoned_odd_sequence() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-restart-odd.dat");
+    let mut first = ShmHandle::new(&path).expect("create first daemon handle");
+    let mut old = sample_archive();
+    old.meta.timestamp_ns = 501;
+    refresh_checksum(&mut old);
+    first.write(&old).expect("seed old snapshot");
+    drop(first);
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("open state for crash injection");
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE`, and mmap supplies page-aligned writable storage.
+    let mut map = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() };
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] sequence zero is
+    // a naturally aligned `AtomicU64` inside the live map and no daemon runs.
+    unsafe {
+        (*map
+            .as_mut_ptr()
+            .add(8)
+            .cast::<std::sync::atomic::AtomicU64>())
+        .store(1, Ordering::Release)
+    };
+    drop(map);
+    drop(file);
+
+    // When
+    let mut restarted = ShmHandle::new(&path).expect("restart daemon handle");
+    let mut new = sample_archive();
+    new.meta.timestamp_ns = 502;
+    refresh_checksum(&mut new);
+    restarted.write(&new).expect("recover and publish");
+
+    // Then
+    let reader = TelemetryReader::new(&path).expect("open reader");
+    assert_eq!(reader.read().unwrap().meta.timestamp_ns, 502);
+    let file = OpenOptions::new().read(true).open(&path).unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the validated state
+    // file remains exactly `SHM_SIZE` and is mapped read-only at page alignment.
+    let map = unsafe { MmapOptions::new().len(SHM_SIZE).map(&file).unwrap() };
+    // SAFETY: [Categories 5, 6, 10 — validity, alignment, bounds] the mapped
+    // header contains initialized atomics at offset zero.
+    let header = unsafe { &*map.as_ptr().cast::<DoubleBufferHeader>() };
+    assert_eq!(header.seq[0].load(Ordering::Acquire), 4);
+    assert_eq!(header.active_index.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn restart_preserves_existing_even_generations() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-restart-even.dat");
+    let mut first = ShmHandle::new(&path).expect("create first daemon handle");
+    let snapshot = sample_archive();
+    first.write(&snapshot).expect("publish buffer one");
+    first.write(&snapshot).expect("publish buffer zero");
+    drop(first);
+
+    // When
+    let mut restarted = ShmHandle::new(&path).expect("restart daemon handle");
+    restarted.write(&snapshot).expect("publish after restart");
+
+    // Then
+    let file = OpenOptions::new().read(true).open(&path).unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the validated state
+    // file remains exactly `SHM_SIZE` and maps at page alignment.
+    let map = unsafe { MmapOptions::new().len(SHM_SIZE).map(&file).unwrap() };
+    // SAFETY: [Categories 5, 6, 10 — validity, alignment, bounds] the header is
+    // initialized and naturally aligned at the start of the mapping.
+    let header = unsafe { &*map.as_ptr().cast::<DoubleBufferHeader>() };
+    assert_eq!(header.seq[0].load(Ordering::Acquire), 2);
+    assert_eq!(header.seq[1].load(Ordering::Acquire), 4);
+    assert_eq!(header.active_index.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn corrupt_active_header_rejects_write_without_state_mutation() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-corrupt-active.dat");
+    let mut daemon = ShmHandle::new(&path).expect("create daemon handle");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE`, and mmap supplies page-aligned writable storage.
+    let mut map = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() };
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] active index is
+    // a naturally aligned atomic in the live map and no other writer exists.
+    unsafe {
+        (*map.as_mut_ptr().cast::<std::sync::atomic::AtomicU64>()).store(2, Ordering::Release)
+    };
+    let before = map[..].to_vec();
+    let snapshot = sample_archive();
+
+    // When
+    let error = daemon
+        .write(&snapshot)
+        .expect_err("corrupt active header must reject");
+
+    // Then
+    assert!(matches!(error, AuraError::InvalidShmHeader { found: 2 }));
+    assert_eq!(&map[..], before.as_slice());
+}
+
+#[test]
+fn exhausted_sequence_rejects_write_without_state_mutation() {
+    // Given
+    let tmp = trusted_temp_dir();
+    let path = tmp.path().join("aura-exhausted-sequence.dat");
+    let mut daemon = ShmHandle::new(&path).expect("create daemon handle");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE`, and mmap supplies page-aligned writable storage.
+    let mut map = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() };
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] sequence one is
+    // a naturally aligned atomic in the live map and no other writer exists.
+    unsafe {
+        (*map
+            .as_mut_ptr()
+            .add(16)
+            .cast::<std::sync::atomic::AtomicU64>())
+        .store(u64::MAX - 1, Ordering::Release)
+    };
+    let before = map[..].to_vec();
+    let snapshot = sample_archive();
+
+    // When
+    let error = daemon
+        .write(&snapshot)
+        .expect_err("exhausted sequence must reject");
+
+    // Then
+    assert!(matches!(
+        error,
+        AuraError::SequenceExhausted { sequence } if sequence == u64::MAX - 1
+    ));
+    assert_eq!(&map[..], before.as_slice());
 }
 
 fn assert_archive_fields_equal(expected: &TelemetryArchive, actual: &TelemetryArchive) {
@@ -291,12 +474,12 @@ fn assert_archive_fields_equal(expected: &TelemetryArchive, actual: &TelemetryAr
     assert_eq!(actual.storage.disk_count, expected.storage.disk_count);
     assert_eq!(actual.storage.mount_count, expected.storage.mount_count);
     assert_eq!(
-        actual.storage.disks[0].rx_bytes,
-        expected.storage.disks[0].rx_bytes
+        actual.storage.disks[0].read_bytes,
+        expected.storage.disks[0].read_bytes
     );
     assert_eq!(
-        actual.storage.disks[0].wx_bytes,
-        expected.storage.disks[0].wx_bytes
+        actual.storage.disks[0].write_bytes,
+        expected.storage.disks[0].write_bytes
     );
 
     assert_eq!(actual.network.if_count, expected.network.if_count);
@@ -407,10 +590,10 @@ fn sample_archive() -> TelemetryArchive {
 
     t.storage.disk_count = 1;
     t.storage.disks[0].name = FixedString16::from_bytes(b"nvme0n1");
-    t.storage.disks[0].rx_bytes = 55_000;
-    t.storage.disks[0].wx_bytes = 77_000;
-    t.storage.disks[0].rx_per_sec = 512.0;
-    t.storage.disks[0].wx_per_sec = 768.0;
+    t.storage.disks[0].read_bytes = 55_000;
+    t.storage.disks[0].write_bytes = 77_000;
+    t.storage.disks[0].read_bytes_per_sec = 512.0;
+    t.storage.disks[0].write_bytes_per_sec = 768.0;
     t.storage.mount_count = 1;
     t.storage.mounts[0].mountpoint[0] = b'/';
     t.storage.mounts[0].fstype = FixedString16::from_bytes(b"ext4");
@@ -449,5 +632,11 @@ fn sample_archive() -> TelemetryArchive {
     t.gpu.gpus[0].temperature_celsius = 61;
     t.gpu.gpus[0].available = 1;
 
+    refresh_checksum(&mut t);
     t
+}
+
+fn refresh_checksum(archive: &mut TelemetryArchive) {
+    archive.checksum = 0;
+    archive.checksum = archive.calculate_checksum();
 }

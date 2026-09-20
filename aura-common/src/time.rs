@@ -5,6 +5,7 @@ pub fn monotonic_ns() -> u64 {
         tv_sec: 0,
         tv_nsec: 0,
     };
+    // SAFETY: `ts` is a valid writable `timespec` pointer and `CLOCK_BOOTTIME` is a valid Linux clock id.
     unsafe {
         libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts);
     }
@@ -20,6 +21,7 @@ pub fn monotonic_ns() -> u64 {
         tv_sec: 0,
         tv_nsec: 0,
     };
+    // SAFETY: `ts` is a valid writable `timespec` pointer and `CLOCK_MONOTONIC` is a valid macOS clock id.
     unsafe {
         libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
     }

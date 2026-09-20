@@ -1,12 +1,20 @@
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use aura_common::{read_double_buffer, TelemetryArchive, SHM_SIZE};
+use aura_common::{
+    read_double_buffer, read_double_buffer_with_elapsed, AuraError, DoubleBufferHeader,
+    TelemetryArchive, SEQLOCK_RETRY_ADMISSION_MS, SHM_SIZE,
+};
 use aura_daemon::state::ShmHandle;
 use memmap2::{Mmap, MmapOptions};
+
+const MULTIPROCESS_HANDOFF_GENERATION: u64 = 512;
+const MULTIPROCESS_FINAL_GENERATION: u64 = 1_024;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct ReaderStats {
@@ -40,11 +48,19 @@ fn ipc_concurrent_reader_writer_stress() {
     const CATCHUP_TIMEOUT: Duration = Duration::from_secs(1);
 
     let temp_dir = tempfile::tempdir().expect("create temp dir");
-    let shm_path = temp_dir.path().join("aura-ipc-concurrent.dat");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod test temp dir");
+    }
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let shm_path = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("aura-ipc-concurrent.dat");
 
     let mut handle = ShmHandle::new(&shm_path).expect("create shm handle");
-    let mut initial = make_archive(1);
-    handle.write(&mut initial).expect("seed initial telemetry");
+    let initial = make_archive(1);
+    handle.write(&initial).expect("seed initial telemetry");
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let latest_writer_version = Arc::new(AtomicU64::new(1));
@@ -156,10 +172,10 @@ fn run_writer_loop(
 
     while !shutdown.load(Ordering::SeqCst) {
         version = version.saturating_add(1);
-        let mut telemetry = make_archive(version);
+        let telemetry = make_archive(version);
 
         stats.total_writes = stats.total_writes.saturating_add(1);
-        match handle.write(&mut telemetry) {
+        match handle.write(&telemetry) {
             Ok(()) => {
                 stats.latest_committed_version = version;
                 latest_version.store(version, Ordering::SeqCst);
@@ -190,7 +206,7 @@ fn run_reader_loop(
         match read_snapshot_once(&mmap, read_timeout, &mut stats) {
             Ok(snapshot) => {
                 stats.successful_reads = stats.successful_reads.saturating_add(1);
-                stats.max_seen_version = stats.max_seen_version.max(snapshot.version);
+                stats.max_seen_version = stats.max_seen_version.max(snapshot.meta.timestamp_ns);
             }
             Err(ReadErrorKind::ChecksumMismatch) => {
                 stats.checksum_failures = stats.checksum_failures.saturating_add(1);
@@ -208,7 +224,7 @@ fn run_reader_loop(
         match read_snapshot_once(&mmap, read_timeout, &mut stats) {
             Ok(snapshot) => {
                 stats.successful_reads = stats.successful_reads.saturating_add(1);
-                stats.max_seen_version = stats.max_seen_version.max(snapshot.version);
+                stats.max_seen_version = stats.max_seen_version.max(snapshot.meta.timestamp_ns);
             }
             Err(ReadErrorKind::ChecksumMismatch) => {
                 stats.checksum_failures = stats.checksum_failures.saturating_add(1);
@@ -228,6 +244,7 @@ fn open_read_map(path: &std::path::Path) -> Mmap {
         .read(true)
         .open(path)
         .expect("open shm for reader");
+    // SAFETY: `ShmHandle` created the file at `SHM_SIZE`, and the stress test never truncates it while readers map it.
     unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
@@ -244,9 +261,10 @@ fn read_snapshot_once(
     let start = Instant::now();
 
     loop {
-        let mut snapshot = match unsafe { read_double_buffer(mmap.as_ptr() as *mut u8) } {
+        // SAFETY: `mmap` covers the full SHM layout and the writer uses the same atomic double-buffer protocol.
+        let mut snapshot = match unsafe { read_double_buffer(mmap.as_ptr()) } {
             Ok(snapshot) => snapshot,
-            Err(()) => {
+            Err(_) => {
                 stats.version_mismatches = stats.version_mismatches.saturating_add(1);
                 stats.version_spin_count = stats.version_spin_count.saturating_add(1);
                 if start.elapsed() >= timeout {
@@ -281,4 +299,328 @@ fn make_archive(version: u64) -> TelemetryArchive {
     archive.checksum = 0;
     archive.checksum = archive.calculate_checksum();
     archive
+}
+
+#[test]
+fn zero_sequence_is_not_published_after_retry_deadline() {
+    // Given
+    let map = memmap2::MmapOptions::new()
+        .len(SHM_SIZE)
+        .map_anon()
+        .expect("create anonymous map");
+
+    // When
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] the anonymous
+    // map is page-aligned, live, and exactly `SHM_SIZE` bytes.
+    let error = unsafe {
+        read_double_buffer_with_elapsed(map.as_ptr(), || {
+            Duration::from_millis(SEQLOCK_RETRY_ADMISSION_MS)
+        })
+    }
+    .expect_err("zero sequence must not publish");
+
+    // Then
+    assert!(matches!(error, AuraError::NotPublished));
+}
+
+#[test]
+fn odd_sequence_times_out_after_retry_deadline() {
+    // Given
+    let mut map = memmap2::MmapOptions::new()
+        .len(SHM_SIZE)
+        .map_anon()
+        .expect("create anonymous map");
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] sequence zero is
+    // a naturally aligned atomic at offset eight in the page-aligned map.
+    unsafe { (*map.as_mut_ptr().add(8).cast::<AtomicU64>()).store(1, Ordering::Release) };
+
+    // When
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] the anonymous
+    // map remains live and aligned for the protocol read.
+    let error = unsafe {
+        read_double_buffer_with_elapsed(map.as_ptr(), || {
+            Duration::from_millis(SEQLOCK_RETRY_ADMISSION_MS)
+        })
+    }
+    .expect_err("odd sequence must time out");
+
+    // Then
+    assert!(matches!(error, AuraError::SeqLockTimeout));
+}
+
+#[test]
+fn writer_generations_increase_under_repeated_publications() {
+    // Given
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod test temp dir");
+    }
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let path = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("generation-state.dat");
+    let mut writer = ShmHandle::new(&path).expect("create writer");
+    let file = OpenOptions::new().read(true).open(&path).unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE` and maps read-only at page alignment.
+    let map = unsafe { MmapOptions::new().len(SHM_SIZE).map(&file).unwrap() };
+    // SAFETY: [Categories 5, 6, 10 — validity, alignment, bounds] the live map
+    // starts with the initialized atomic header.
+    let header = unsafe { &*map.as_ptr().cast::<DoubleBufferHeader>() };
+    let mut previous = [0u64; 2];
+
+    // When
+    for marker in 1..=128 {
+        writer
+            .write(&make_archive(marker))
+            .expect("publish generation");
+        let current = [
+            header.seq[0].load(Ordering::Acquire),
+            header.seq[1].load(Ordering::Acquire),
+        ];
+        assert!(current[0] >= previous[0]);
+        assert!(current[1] >= previous[1]);
+        previous = current;
+    }
+
+    // Then
+    assert_eq!(previous, [128, 128]);
+}
+
+#[test]
+fn concurrent_abandoned_sequence_recovery_never_returns_mixed_archive() {
+    // Given
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod test temp dir");
+    }
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let path = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("recovery-state.dat");
+    let mut writer = ShmHandle::new(&path).expect("create writer");
+    writer.write(&make_archive(300)).expect("seed old snapshot");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    // SAFETY: [Categories 6 and 10 — alignment and bounds] the state file is
+    // exactly `SHM_SIZE` and maps writable at page alignment.
+    let mut injection = unsafe { MmapOptions::new().len(SHM_SIZE).map_mut(&file).unwrap() };
+    // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] inactive
+    // sequence zero is naturally aligned and no other thread accesses it yet.
+    unsafe { (*injection.as_mut_ptr().add(8).cast::<AtomicU64>()).store(1, Ordering::Release) };
+    drop(injection);
+    let reader_map = open_read_map(&path);
+    let barrier = Arc::new(Barrier::new(2));
+    let reader_barrier = Arc::clone(&barrier);
+    let reader = thread::spawn(move || {
+        reader_barrier.wait();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] the map
+            // is live and the writer uses only the matching atomic protocol.
+            if let Ok(snapshot) = unsafe { read_double_buffer(reader_map.as_ptr()) } {
+                assert_eq!(snapshot.meta.timestamp_ns, snapshot.cpu.total_ticks);
+                if snapshot.meta.timestamp_ns == 301 {
+                    return;
+                }
+            }
+            assert!(Instant::now() < deadline, "reader did not observe recovery");
+            thread::yield_now();
+        }
+    });
+
+    // When
+    barrier.wait();
+    writer
+        .write(&make_archive(301))
+        .expect("recover abandoned sequence");
+
+    // Then
+    reader.join().expect("reader thread join");
+}
+
+#[test]
+fn ipc_multiprocess_release_stress_uses_atomic_protocol() {
+    // Given
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod test temp dir");
+    }
+    // macOS temp dirs live under /var, a symlink the SHM security layer rejects.
+    let state = std::fs::canonicalize(temp_dir.path())
+        .expect("canonical temp dir")
+        .join("multiprocess-state.dat");
+    let writer_ready = temp_dir.path().join("writer.ready");
+    let reader_ready = temp_dir.path().join("reader.ready");
+    let start = temp_dir.path().join("start");
+    let done = temp_dir.path().join("done");
+    let observed = temp_dir.path().join("observed");
+    let executable = std::env::current_exe().expect("locate test executable");
+    let mut writer = Command::new(&executable)
+        .args(["--exact", "multiprocess_writer_child", "--ignored"])
+        .env("AURA_IPC_STATE", &state)
+        .env("AURA_IPC_READY", &writer_ready)
+        .env("AURA_IPC_START", &start)
+        .env("AURA_IPC_DONE", &done)
+        .env("AURA_IPC_OBSERVED", &observed)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn writer child");
+    if let Err(error) = wait_for_marker(&writer_ready) {
+        terminate(&mut writer);
+        panic!("writer readiness failed: {error}");
+    }
+    let mut reader = Command::new(&executable)
+        .args(["--exact", "multiprocess_reader_child", "--ignored"])
+        .env("AURA_IPC_STATE", &state)
+        .env("AURA_IPC_READY", &reader_ready)
+        .env("AURA_IPC_START", &start)
+        .env("AURA_IPC_DONE", &done)
+        .env("AURA_IPC_OBSERVED", &observed)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn reader child");
+    if let Err(error) = wait_for_marker(&reader_ready) {
+        terminate(&mut writer);
+        terminate(&mut reader);
+        panic!("reader readiness failed: {error}");
+    }
+
+    // When
+    File::create(&start).expect("release child processes");
+    let writer_output = writer.wait_with_output().expect("wait for writer child");
+    let reader_output = reader.wait_with_output().expect("wait for reader child");
+
+    // Then
+    assert!(
+        writer_output.status.success(),
+        "writer child failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&writer_output.stdout),
+        String::from_utf8_lossy(&writer_output.stderr)
+    );
+    assert!(
+        reader_output.status.success(),
+        "reader child failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&reader_output.stdout),
+        String::from_utf8_lossy(&reader_output.stderr)
+    );
+    let observed_generation = std::fs::read_to_string(&observed)
+        .expect("reader must report an observed intermediate generation")
+        .parse::<u64>()
+        .expect("observed generation must be a u64");
+    assert!(
+        (2..=MULTIPROCESS_HANDOFF_GENERATION).contains(&observed_generation),
+        "reader reported non-intermediate generation {observed_generation}"
+    );
+}
+
+#[test]
+#[ignore = "spawned by ipc_multiprocess_release_stress_uses_atomic_protocol"]
+fn multiprocess_writer_child() {
+    // Given
+    let state = required_path("AURA_IPC_STATE");
+    let ready = required_path("AURA_IPC_READY");
+    let start = required_path("AURA_IPC_START");
+    let done = required_path("AURA_IPC_DONE");
+    let observed = required_path("AURA_IPC_OBSERVED");
+    let mut writer = ShmHandle::new(&state).expect("child creates state");
+    writer.write(&make_archive(1)).expect("child seeds state");
+    File::create(ready).expect("signal writer ready");
+    wait_for_marker(&start).expect("wait for parent release");
+
+    // When
+    for marker in 2..=MULTIPROCESS_HANDOFF_GENERATION {
+        writer
+            .write(&make_archive(marker))
+            .expect("child publishes snapshot");
+    }
+    wait_for_marker(&observed).expect("wait for reader intermediate observation");
+    for marker in (MULTIPROCESS_HANDOFF_GENERATION + 1)..=MULTIPROCESS_FINAL_GENERATION {
+        writer
+            .write(&make_archive(marker))
+            .expect("child publishes snapshot");
+    }
+
+    // Then
+    File::create(done).expect("signal writer completion");
+}
+
+#[test]
+#[ignore = "spawned by ipc_multiprocess_release_stress_uses_atomic_protocol"]
+fn multiprocess_reader_child() {
+    // Given
+    let state = required_path("AURA_IPC_STATE");
+    let ready = required_path("AURA_IPC_READY");
+    let start = required_path("AURA_IPC_START");
+    let done = required_path("AURA_IPC_DONE");
+    let observed = required_path("AURA_IPC_OBSERVED");
+    let map = open_read_map(&state);
+    File::create(ready).expect("signal reader ready");
+    wait_for_marker(&start).expect("wait for parent release");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut successful_reads = 0u64;
+    let mut observed_generation = None;
+
+    // When
+    loop {
+        // SAFETY: [Categories 2, 6, 10 — races, alignment, bounds] the mapping
+        // is live while the writer process uses the matching atomic protocol.
+        if let Ok(mut snapshot) = unsafe { read_double_buffer(map.as_ptr()) } {
+            assert_eq!(snapshot.meta.timestamp_ns, snapshot.cpu.total_ticks);
+            let expected = snapshot.checksum;
+            snapshot.checksum = 0;
+            assert_eq!(snapshot.calculate_checksum(), expected);
+            successful_reads += 1;
+            let generation = snapshot.meta.timestamp_ns;
+            if observed_generation.is_none()
+                && (2..=MULTIPROCESS_HANDOFF_GENERATION).contains(&generation)
+            {
+                std::fs::write(&observed, generation.to_string())
+                    .expect("report intermediate generation");
+                observed_generation = Some(generation);
+            }
+        }
+        if done.exists() && observed_generation.is_some() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "multiprocess reader timed out");
+        thread::yield_now();
+    }
+
+    // Then
+    assert!(successful_reads > 0);
+    assert!(observed_generation.is_some());
+}
+
+fn required_path(name: &str) -> std::path::PathBuf {
+    std::env::var_os(name)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| panic!("missing {name}"))
+}
+
+fn wait_for_marker(path: &Path) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !path.exists() {
+        if Instant::now() >= deadline {
+            return Err(format!("marker {} timed out", path.display()));
+        }
+        thread::yield_now();
+    }
+    Ok(())
+}
+
+fn terminate(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
