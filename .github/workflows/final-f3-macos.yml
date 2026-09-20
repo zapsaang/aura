@@ -42,10 +42,12 @@ jobs:
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set -euo pipefail
+          printf '\n/final/\n' >> "$(git rev-parse --git-path info/exclude)"
+          mkdir -p final/work
           asset_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" --jq "[.[] | select(.tag_name == env.TAG and .draft == true)][0].assets[] | select(.name == \"aggregate.tar.gz\") | .url")"
           test -n "$asset_url"
-          gh api -H 'Accept: application/octet-stream' "$asset_url" > aggregate.tar.gz
-          echo "${TRANSPORT_SHA256}  aggregate.tar.gz" | sha256sum -c -
+          gh api -H 'Accept: application/octet-stream' "$asset_url" > final/work/aggregate.tar.gz
+          echo "${TRANSPORT_SHA256}  final/work/aggregate.tar.gz" | sha256sum -c -
 
       - name: Materialize F3 macOS input
         env:
@@ -54,9 +56,8 @@ jobs:
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set -euo pipefail
-          printf '\n/final/\n' >> "$(git rev-parse --git-path info/exclude)"
           python3 scripts/extract-evidence-archive.py \
-            --archive aggregate.tar.gz \
+            --archive final/work/aggregate.tar.gz \
             --destination final/work/F3-input-macos \
             --root aggregate \
             --sha256 "$TRANSPORT_SHA256"
