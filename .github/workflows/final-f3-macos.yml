@@ -42,7 +42,6 @@ jobs:
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set -euo pipefail
-          echo "PROBE: running main-copy download step v2"
           asset_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" --jq "[.[] | select(.tag_name == env.TAG and .draft == true)][0].assets[] | select(.name == \"aggregate.tar.gz\") | .url")"
           test -n "$asset_url"
           gh api -H 'Accept: application/octet-stream' "$asset_url" > aggregate.tar.gz
