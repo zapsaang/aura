@@ -84,7 +84,7 @@ def _manifest_assets(path: Path) -> tuple[tuple[str, str], ...]:
 
 def _release_assets(repo: str, tag: str, token: str, timeout: float) -> tuple[tuple[str, str], ...]:
     request = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+        f"https://api.github.com/repos/{repo}/releases?per_page=100",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
@@ -106,9 +106,16 @@ def _release_assets(repo: str, tag: str, token: str, timeout: float) -> tuple[tu
         payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError):
         fail("GitHub release API returned invalid JSON")
-    if not isinstance(payload, dict):
-        fail("GitHub release API response must be an object")
-    values = require_list(payload.get("assets"), "release assets")
+    releases = require_list(payload, "GitHub releases")
+    matches: list[dict[str, object]] = []
+    for index, release in enumerate(releases):
+        if not isinstance(release, dict):
+            fail(f"GitHub release {index} must be an object")
+        if require_string(release.get("tag_name"), f"GitHub release {index} tag") == tag:
+            matches.append(release)
+    if len(matches) != 1:
+        fail(f"expected exactly one GitHub release matching tag {tag}")
+    values = require_list(matches[0].get("assets"), "release assets")
     assets: list[tuple[str, str]] = []
     for index, value in enumerate(values):
         if not isinstance(value, dict):

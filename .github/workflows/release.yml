@@ -774,7 +774,7 @@ jobs:
             --assets-manifest-out "$SEAL_ROOT/assets.txt"
 
           RELEASE_URL="$(gh release view "$TAG" --json url --jq '.url')"
-          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id')"
+          RELEASE_ID="$(gh release view "$TAG" --json databaseId --jq '.databaseId')"
           {
             echo "assets_manifest_sha256=$(sha256sum "$SEAL_ROOT/assets.txt" | cut -d' ' -f1)"
             echo "release_id=$RELEASE_ID"

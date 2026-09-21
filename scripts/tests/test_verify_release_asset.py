@@ -102,7 +102,9 @@ class VerifyReleaseAssetTests(unittest.TestCase):
                 "2.5",
             ]
             response = io.BytesIO(
-                json.dumps({"assets": self._assets() if assets is None else assets}).encode("utf-8")
+                json.dumps(
+                    [{"tag_name": TAG, "draft": True, "assets": self._assets() if assets is None else assets}]
+                ).encode("utf-8")
             )
             stdout = io.StringIO()
             stderr = io.StringIO()
@@ -133,8 +135,8 @@ class VerifyReleaseAssetTests(unittest.TestCase):
         self.assertNotIn(TOKEN, stderr)
         self.assertIsNone(manifest)
 
-    def test_succeeds_when_formula_and_nine_assets_match(self) -> None:
-        # Given a canonical four-pair formula and its nine release assets
+    def test_succeeds_when_draft_release_matches_formula_and_nine_assets(self) -> None:
+        # Given a canonical four-pair formula and its draft release assets
         formula = self._formula()
 
         # When the authenticated API verification runs
@@ -151,7 +153,7 @@ class VerifyReleaseAssetTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(
             request.full_url,
-            f"https://api.github.com/repos/{REPO}/releases/tags/{TAG}",
+            f"https://api.github.com/repos/{REPO}/releases?per_page=100",
         )
         self.assertEqual(request.get_header("Authorization"), f"Bearer {TOKEN}")
         self.assertEqual(urlopen.call_args.kwargs, {"timeout": 2.5})
