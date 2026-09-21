@@ -1,10 +1,10 @@
 use aura_common::{
     TelemetryArchive, CAP_CPU_GLOBAL, CAP_GPU_ENUMERATION, CAP_MEMORY_RAM_TOTAL,
-    CAP_MEMORY_RAM_USED, CAP_MEMORY_SWAP, CAP_META_WALLCLOCK, CAP_NETWORK_BYTES, CAP_NETWORK_RATES,
-    CAP_PROCESS_TOP_CPU, CAP_STORAGE_DISK_RATES, GPU_CAP_UTILIZATION,
+    CAP_MEMORY_RAM_USED, CAP_MEMORY_SWAP, CAP_META_OS_IDENTITY, CAP_NETWORK_BYTES,
+    CAP_NETWORK_RATES, CAP_PROCESS_TOP_CPU, CAP_STORAGE_DISK_RATES, GPU_CAP_UTILIZATION,
 };
 
-use super::si::si;
+use super::{meta::os_icon, si::si};
 use crate::args::Module;
 
 fn cpu_row(t: &TelemetryArchive) -> String {
@@ -69,8 +69,11 @@ fn net_row(t: &TelemetryArchive) -> String {
 }
 
 fn os_row(t: &TelemetryArchive) -> String {
-    if t.capabilities & CAP_META_WALLCLOCK != 0 {
-        format!("os={}", t.meta.wallclock_ns)
+    if t.capabilities & CAP_META_OS_IDENTITY != 0 {
+        format!(
+            "os={}",
+            os_icon(t.meta.os.os_id.as_str(), t.meta.os.os_type.as_str())
+        )
     } else {
         "os=N/A".to_string()
     }
