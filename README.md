@@ -169,10 +169,20 @@ log show --predicate 'process == "aura-daemon"' --last 1m
 
 ### Homebrew
 
-AURA ships a formula template (`deployment/homebrew/aura.rb.in`) that CI
-renders with the real release artifact digests and audits on macOS; no
-source formulas are tracked in this repository. Install from the rendered
-formula published with each release.
+Install the reviewed tap formula:
+
+```bash
+brew install zapsaang/tap/aura
+```
+
+Each release begins as a draft while its formula change is reviewed in the
+tap. After the maintainer merges that PR, they publish it manually with
+`gh release edit $TAG --draft=false`; only then can Homebrew download its
+assets. Upgrade an installed copy with `brew update && brew upgrade aura`.
+
+The formula is rendered from `deployment/homebrew/aura.rb.in` with the
+verified release digests and audited on macOS; no source formula is tracked
+in this repository.
 
 ### NixOS / Home Manager
 
