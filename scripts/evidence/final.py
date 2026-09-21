@@ -4,14 +4,34 @@ from pathlib import Path
 
 from .final_tree import validate_final_layout, verify_gate_tree, verify_native_handoffs
 from .manifest import verify_manifest, write_manifest
-from .model import canonical_json_bytes, decode_json_bytes, fail, sha256_file, write_new
+from .model import (
+    canonical_json_bytes,
+    decode_json_bytes,
+    fail,
+    require_enum,
+    require_exact_keys,
+    require_hex,
+    require_string,
+    require_uint,
+    sha256_file,
+    utcnow_rfc3339,
+    write_new,
+)
 from .receipt import (
     FinalIdentity,
     GateIdentity,
     HandoffIdentity,
+    PublishIdentity,
     validate_final_receipt,
     validate_gate_receipt,
     validate_handoff_receipt,
+    validate_publish_receipt,
+)
+from .receipt_publish import (
+    ALLOWED_STATUS,
+    ALLOWED_TARGETS,
+    GITHUB_RELEASE_EXTRA,
+    HOMEBREW_EXTRA,
 )
 from .registry import Registry
 from .tuple import verify_tuple
@@ -158,6 +178,59 @@ def seal_native_handoff(
         "verified_commit": identity.verified_commit,
     }
     validate_handoff_receipt(receipt, identity)
+    write_new(root / "receipt.json", canonical_json_bytes(receipt))
+    return receipt
+
+
+def seal_publish(
+    root: Path,
+    identity: PublishIdentity,
+    extras: dict[str, object],
+) -> dict[str, object]:
+    if (root / "receipt.json").exists() or (root / "SHA256SUMS").exists():
+        fail("publish root is already sealed")
+    target = require_enum(identity.target, ALLOWED_TARGETS, "publish target")
+    expected_extras = GITHUB_RELEASE_EXTRA if target == "github-release" else HOMEBREW_EXTRA
+    require_exact_keys(extras, expected_extras | {"status"}, f"{target} publish extras")
+    status = require_enum(extras["status"], ALLOWED_STATUS, "publish status")
+    target_values: dict[str, object]
+    if target == "github-release":
+        assets_manifest_sha256 = require_hex(
+            extras["assets_manifest_sha256"], 64, "assets_manifest_sha256"
+        )
+        assets_manifest = root / "assets.txt"
+        if not assets_manifest.is_file() or assets_manifest.is_symlink():
+            fail("GitHub release assets manifest is not a regular file")
+        if sha256_file(assets_manifest) != assets_manifest_sha256:
+            fail("GitHub release assets manifest digest differs from the copied manifest")
+        target_values = {
+            "assets_manifest_sha256": assets_manifest_sha256,
+            "release_id": require_uint(extras["release_id"], "release_id", positive=True),
+            "release_url": require_string(extras["release_url"], "release_url"),
+        }
+    else:
+        target_values = {
+            "pr_branch": require_string(extras["pr_branch"], "pr_branch"),
+            "pr_number": require_uint(extras["pr_number"], "pr_number"),
+            "pr_url": require_string(extras["pr_url"], "pr_url"),
+            "tap_default_branch": require_string(extras["tap_default_branch"], "tap_default_branch"),
+        }
+    top_manifest = write_manifest(root, frozenset({"SHA256SUMS", "receipt.json"}))
+    receipt: dict[str, object] = {
+        "created_at": utcnow_rfc3339(),
+        "formula_sha256": identity.formula_sha256,
+        "manifest_sha256": top_manifest,
+        "run_attempt": identity.run_attempt,
+        "run_id": identity.run_id,
+        "schema_version": 1,
+        "seal_actor": "aura-publisher",
+        "status": status,
+        "tag": identity.tag,
+        "target": target,
+        "verified_commit": identity.verified_commit,
+    }
+    receipt.update(target_values)
+    validate_publish_receipt(receipt, identity)
     write_new(root / "receipt.json", canonical_json_bytes(receipt))
     return receipt
 

@@ -9,6 +9,7 @@ from .receipt_final import FinalIdentity, validate_final_receipt
 from .receipt_gate import GATE_COMMANDS, GateIdentity, validate_gate_receipt
 from .receipt_handoff import HandoffIdentity, validate_handoff_receipt
 from .receipt_lane import LANE_CONTRACTS, LANE_JOBS, validate_lane_receipt
+from .receipt_publish import PublishIdentity, validate_publish_receipt
 
 __all__ = (
     "GATE_COMMANDS",
@@ -19,9 +20,11 @@ __all__ = (
     "FinalIdentity",
     "GateIdentity",
     "HandoffIdentity",
+    "PublishIdentity",
     "validate_aggregate_receipt",
     "validate_final_receipt",
     "validate_gate_receipt",
     "validate_handoff_receipt",
     "validate_lane_receipt",
+    "validate_publish_receipt",
 )

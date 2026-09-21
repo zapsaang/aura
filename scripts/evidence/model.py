@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 
@@ -132,6 +133,10 @@ def require_sorted_unique(values: list[str], label: str) -> None:
 
 def sha256_bytes(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+def utcnow_rfc3339() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def sha256_fd(descriptor: int) -> str:
