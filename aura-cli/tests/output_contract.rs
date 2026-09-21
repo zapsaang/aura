@@ -925,7 +925,16 @@ fn value_net_exact() {
 
 #[test]
 fn value_os_exact() {
-    assert_eq!(value(Module::Os, &meta_archive()), "os=1700000000000000000");
+    assert_eq!(value(Module::Os, &meta_archive()), "os=\u{f31b}");
+}
+
+#[test]
+fn value_os_macos_identity_exact() {
+    let mut t = meta_archive();
+    t.meta.os.os_type = fs16("Darwin");
+    t.meta.os.os_id = fs16("macos");
+    t.meta.os.os_pretty_name = fixed("macOS");
+    assert_eq!(value(Module::Os, &t), "os=\u{f302}");
 }
 
 #[test]
@@ -993,9 +1002,9 @@ fn value_net_na_when_no_interfaces() {
 }
 
 #[test]
-fn value_os_na_when_wallclock_clear() {
+fn value_os_na_when_identity_clear() {
     let mut t = meta_archive();
-    t.capabilities &= !CAP_META_WALLCLOCK;
+    t.capabilities &= !CAP_META_OS_IDENTITY;
     assert_eq!(value(Module::Os, &t), "os=N/A");
 }
 
@@ -1047,12 +1056,12 @@ fn value_all_exact_eight_rows() {
     t.storage.disks = storage_archive().storage.disks;
     t.storage.disk_count = 1;
     t.network.if_count = 1;
-    t.meta.wallclock_ns = 8;
+    t.meta = meta_archive().meta;
     t.gpu.gpus = gpu_archive().gpu.gpus;
     t.gpu.gpu_count = 1;
     assert_eq!(
         value(Module::All, &t),
-        "cpu=1.5%\nprocess=50.0%\nmem=2.5%\nswap=3.5%\ndisk=read=1.5KB/s,write=2.0MB/s\nnet=rx=6.0B/s,tx=7.0B/s\nos=8\ngpu=55.5%"
+        "cpu=1.5%\nprocess=50.0%\nmem=2.5%\nswap=3.5%\ndisk=read=1.5KB/s,write=2.0MB/s\nnet=rx=6.0B/s,tx=7.0B/s\nos=\u{f31b}\ngpu=55.5%"
     );
 }
 
@@ -1533,6 +1542,34 @@ fn binary_value_format_exact_row() {
     assert_eq!(out.status.code(), Some(0));
     assert!(out.stderr.is_empty());
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "cpu=42.0%\n");
+}
+
+#[test]
+fn binary_value_os_exact_row() {
+    let dir = temp_shm_dir("bin-value-os");
+    let shm = dir.join("state.dat");
+    let mut t = meta_archive();
+    t.meta.timestamp_ns = monotonic_ns();
+    write_shm(&shm, &t);
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_aura-cli"))
+        .args([
+            "-m",
+            "os",
+            "--format",
+            "value",
+            "--color",
+            "none",
+            "--shm-path",
+        ])
+        .arg(&shm)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stderr.is_empty());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "os=\u{f31b}\n");
 }
 
 #[test]

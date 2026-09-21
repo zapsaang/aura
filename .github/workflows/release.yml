@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   TAG: ${{ github.ref_name }}
 
@@ -450,6 +454,7 @@ jobs:
 
       - name: Execute and seal ubuntu-default lane
         env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
           TAG: ${{ env.TAG }}
         run: |
           SHA_LINUX_X86=$(shasum -a 256 artifacts/aura-x86_64-unknown-linux-gnu/aura-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')
@@ -473,6 +478,7 @@ jobs:
             --binding "SHA_LINUX_ARM=$SHA_LINUX_ARM" \
             --binding "SHA_MACOS_ARM=$SHA_MACOS_ARM" \
             --binding "SHA_MACOS_X86=$SHA_MACOS_X86" \
+            --binding "SOURCE_REPOSITORY=$SOURCE_REPOSITORY" \
             --release dist/homebrew/aura.rb=releases/homebrew/aura.rb
 
       - name: Record formula SHA-256
@@ -485,6 +491,13 @@ jobs:
           path: |
             dist/homebrew/aura.rb
             dist/homebrew/aura.rb.sha256
+
+      - name: Upload fixed render tuple
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: homebrew-render-tuple
+          path: .omo/evidence/design-compliance-remediation/lane/ubuntu-default/tuples/homebrew-render
+          if-no-files-found: error
 
       - name: Bind lane archive to content digest
         id: lane-digest
@@ -535,6 +548,13 @@ jobs:
             --rustc auto \
             --cargo auto \
             --binding "SHA_FORMULA=$SHA_FORMULA"
+
+      - name: Upload fixed audit tuple
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: homebrew-audit-tuple
+          path: .omo/evidence/design-compliance-remediation/lane/macos-default/tuples/homebrew-audit
+          if-no-files-found: error
 
       - name: Bind lane archive to content digest
         id: lane-digest
@@ -588,4 +608,465 @@ jobs:
         with:
           name: aura-producer-source-${{ steps.producer-digest.outputs.sha256 }}
           path: .omo/evidence/design-compliance-remediation/producers/source.tar.gz
+          if-no-files-found: error
+
+  publish-github-release:
+    name: publish-github-release
+    needs:
+      - release-linux-x86
+      - release-linux-arm64
+      - release-macos-arm64
+      - release-macos-x86
+      - homebrew-render
+      - homebrew-audit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPO || 'zapsaang/homebrew-tap' }}
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux x86_64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-x86_64-unknown-linux-gnu
+          path: artifacts/aura-x86_64-unknown-linux-gnu
+
+      - name: Download Linux aarch64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-aarch64-unknown-linux-gnu
+          path: artifacts/aura-aarch64-unknown-linux-gnu
+
+      - name: Download macOS x86_64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-x86_64-apple-darwin
+          path: artifacts/aura-x86_64-apple-darwin
+
+      - name: Download macOS aarch64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-aarch64-apple-darwin
+          path: artifacts/aura-aarch64-apple-darwin
+
+      - name: Download Homebrew formula
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: homebrew-formula
+          path: dist/homebrew
+
+      - name: Download render tuple
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: homebrew-render-tuple
+          path: .omo/evidence/design-compliance-remediation/lane/ubuntu-default/tuples/homebrew-render
+
+      - name: Download audit tuple
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: homebrew-audit-tuple
+          path: .omo/evidence/design-compliance-remediation/lane/macos-default/tuples/homebrew-audit
+
+      - name: Revalidate tag, commit, and publish inputs
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          echo "$TAG" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          test "$(GIT_MASTER=1 git rev-parse --verify "refs/tags/${TAG}^{commit}")" = "${{ github.sha }}"
+          python3 scripts/verify-publish-input.py \
+            --formula dist/homebrew/aura.rb \
+            --sha256 "$(cat dist/homebrew/aura.rb.sha256)" \
+            --audit-tuple .omo/evidence/design-compliance-remediation/lane/macos-default/tuples/homebrew-audit \
+            --render-tuple .omo/evidence/design-compliance-remediation/lane/ubuntu-default/tuples/homebrew-render \
+            --tag "$TAG" \
+            --verified-commit '${{ github.sha }}'
+
+      - name: Create or update draft release and bind assets
+        id: release
+        env:
+          AURA_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          ASSETS=(
+            dist/homebrew/aura.rb
+            artifacts/aura-x86_64-unknown-linux-gnu/aura-x86_64-unknown-linux-gnu.tar.gz
+            artifacts/aura-x86_64-unknown-linux-gnu/aura-x86_64-unknown-linux-gnu.tar.gz.sha256
+            artifacts/aura-aarch64-unknown-linux-gnu/aura-aarch64-unknown-linux-gnu.tar.gz
+            artifacts/aura-aarch64-unknown-linux-gnu/aura-aarch64-unknown-linux-gnu.tar.gz.sha256
+            artifacts/aura-x86_64-apple-darwin/aura-x86_64-apple-darwin.tar.gz
+            artifacts/aura-x86_64-apple-darwin/aura-x86_64-apple-darwin.tar.gz.sha256
+            artifacts/aura-aarch64-apple-darwin/aura-aarch64-apple-darwin.tar.gz
+            artifacts/aura-aarch64-apple-darwin/aura-aarch64-apple-darwin.tar.gz.sha256
+          )
+          for asset in "${ASSETS[@]}"; do
+            test -f "$asset"
+          done
+          for target in \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin; do
+            (cd "artifacts/aura-${target}" && sha256sum -c "aura-${target}.tar.gz.sha256")
+          done
+          EXPECTED_ASSETS_MANIFEST="$RUNNER_TEMP/expected-assets.txt"
+          : > "$EXPECTED_ASSETS_MANIFEST"
+          for asset in "${ASSETS[@]}"; do
+            printf '%s %s\n' "$(basename "$asset")" "$(sha256sum "$asset" | cut -d' ' -f1)" >> "$EXPECTED_ASSETS_MANIFEST"
+          done
+          LC_ALL=C sort -o "$EXPECTED_ASSETS_MANIFEST" "$EXPECTED_ASSETS_MANIFEST"
+          test "$(wc -l < "$EXPECTED_ASSETS_MANIFEST")" -eq 9
+
+          SHA_LINUX_X86="$(sha256sum artifacts/aura-x86_64-unknown-linux-gnu/aura-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)"
+          SHA_LINUX_ARM="$(sha256sum artifacts/aura-aarch64-unknown-linux-gnu/aura-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)"
+          SHA_MACOS_X86="$(sha256sum artifacts/aura-x86_64-apple-darwin/aura-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)"
+          SHA_MACOS_ARM="$(sha256sum artifacts/aura-aarch64-apple-darwin/aura-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)"
+          RELEASE_NOTES="$RUNNER_TEMP/release-notes-${TAG}.md"
+          cat > "$RELEASE_NOTES" <<EOF
+          # Aura ${TAG}
+
+          Verified commit: \`${GITHUB_SHA}\`
+
+          ## SHA-256
+
+          | asset | sha256 |
+          |---|---|
+          | aura-x86_64-unknown-linux-gnu.tar.gz | ${SHA_LINUX_X86} |
+          | aura-aarch64-unknown-linux-gnu.tar.gz | ${SHA_LINUX_ARM} |
+          | aura-x86_64-apple-darwin.tar.gz | ${SHA_MACOS_X86} |
+          | aura-aarch64-apple-darwin.tar.gz | ${SHA_MACOS_ARM} |
+
+          ## Audit log
+          https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          ## Homebrew
+          Formula updates are proposed to https://github.com/${TAP_REPOSITORY}.
+          EOF
+
+          if IS_DRAFT="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "Refusing to mutate published release ${TAG}" >&2
+              exit 1
+            fi
+            gh release edit "$TAG" --title "$TAG" --notes-file "$RELEASE_NOTES"
+            gh release upload "$TAG" --clobber "${ASSETS[@]}"
+          else
+            gh release create "$TAG" --draft \
+              --title "$TAG" \
+              --notes-file "$RELEASE_NOTES" \
+              "${ASSETS[@]}"
+          fi
+
+          SEAL_ROOT=.omo/evidence/design-compliance-remediation/publish/github-release
+          mkdir -p "$SEAL_ROOT"
+          python3 scripts/verify-release-asset.py \
+            --formula dist/homebrew/aura.rb \
+            --tag "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --expected-manifest "$EXPECTED_ASSETS_MANIFEST" \
+            --assets-manifest-out "$SEAL_ROOT/assets.txt"
+
+          RELEASE_URL="$(gh release view "$TAG" --json url --jq '.url')"
+          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id')"
+          {
+            echo "assets_manifest_sha256=$(sha256sum "$SEAL_ROOT/assets.txt" | cut -d' ' -f1)"
+            echo "release_id=$RELEASE_ID"
+            echo "release_url=$RELEASE_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Seal GitHub release publication
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          python3 scripts/seal-publish.py \
+            --target github-release \
+            --release-url '${{ steps.release.outputs.release_url }}' \
+            --release-id '${{ steps.release.outputs.release_id }}' \
+            --assets-manifest-sha256 '${{ steps.release.outputs.assets_manifest_sha256 }}' \
+            --formula-sha256 "$(cat dist/homebrew/aura.rb.sha256)" \
+            --tag "$TAG" \
+            --verified-commit '${{ github.sha }}' \
+            --run-id '${{ github.run_id }}' \
+            --run-attempt '${{ github.run_attempt }}' \
+            --root .omo/evidence/design-compliance-remediation/publish/github-release
+
+      - name: Bind GitHub release receipt to content digest
+        id: seal-digest
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          receipt=.omo/evidence/design-compliance-remediation/publish/github-release/receipt.json
+          echo "sha256=$(sha256sum "$receipt" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload content-addressed GitHub release receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aura-publish-github-release-${{ steps.seal-digest.outputs.sha256 }}
+          path: .omo/evidence/design-compliance-remediation/publish/github-release
+          if-no-files-found: error
+
+  publish-homebrew:
+    name: publish-homebrew
+    needs:
+      - publish-github-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPO || 'zapsaang/homebrew-tap' }}
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux x86_64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-x86_64-unknown-linux-gnu
+          path: artifacts/aura-x86_64-unknown-linux-gnu
+
+      - name: Download Linux aarch64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-aarch64-unknown-linux-gnu
+          path: artifacts/aura-aarch64-unknown-linux-gnu
+
+      - name: Download macOS x86_64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-x86_64-apple-darwin
+          path: artifacts/aura-x86_64-apple-darwin
+
+      - name: Download macOS aarch64 release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: aura-aarch64-apple-darwin
+          path: artifacts/aura-aarch64-apple-darwin
+
+      - name: Download Homebrew formula
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: homebrew-formula
+          path: dist/homebrew
+
+      - name: Download render tuple
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: homebrew-render-tuple
+          path: .omo/evidence/design-compliance-remediation/lane/ubuntu-default/tuples/homebrew-render
+
+      - name: Download audit tuple
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: homebrew-audit-tuple
+          path: .omo/evidence/design-compliance-remediation/lane/macos-default/tuples/homebrew-audit
+
+      - name: Revalidate source inputs and release assets
+        env:
+          AURA_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          echo "$TAG" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          test "$(GIT_MASTER=1 git rev-parse --verify "refs/tags/${TAG}^{commit}")" = "${{ github.sha }}"
+          python3 scripts/verify-publish-input.py \
+            --formula dist/homebrew/aura.rb \
+            --sha256 "$(cat dist/homebrew/aura.rb.sha256)" \
+            --audit-tuple .omo/evidence/design-compliance-remediation/lane/macos-default/tuples/homebrew-audit \
+            --render-tuple .omo/evidence/design-compliance-remediation/lane/ubuntu-default/tuples/homebrew-render \
+            --tag "$TAG" \
+            --verified-commit '${{ github.sha }}'
+          EXPECTED_ASSETS_MANIFEST="$RUNNER_TEMP/expected-assets-homebrew.txt"
+          : > "$EXPECTED_ASSETS_MANIFEST"
+          for asset in \
+            dist/homebrew/aura.rb \
+            artifacts/aura-x86_64-unknown-linux-gnu/aura-x86_64-unknown-linux-gnu.tar.gz \
+            artifacts/aura-x86_64-unknown-linux-gnu/aura-x86_64-unknown-linux-gnu.tar.gz.sha256 \
+            artifacts/aura-aarch64-unknown-linux-gnu/aura-aarch64-unknown-linux-gnu.tar.gz \
+            artifacts/aura-aarch64-unknown-linux-gnu/aura-aarch64-unknown-linux-gnu.tar.gz.sha256 \
+            artifacts/aura-x86_64-apple-darwin/aura-x86_64-apple-darwin.tar.gz \
+            artifacts/aura-x86_64-apple-darwin/aura-x86_64-apple-darwin.tar.gz.sha256 \
+            artifacts/aura-aarch64-apple-darwin/aura-aarch64-apple-darwin.tar.gz \
+            artifacts/aura-aarch64-apple-darwin/aura-aarch64-apple-darwin.tar.gz.sha256; do
+            printf '%s %s\n' "$(basename "$asset")" "$(sha256sum "$asset" | cut -d' ' -f1)" >> "$EXPECTED_ASSETS_MANIFEST"
+          done
+          LC_ALL=C sort -o "$EXPECTED_ASSETS_MANIFEST" "$EXPECTED_ASSETS_MANIFEST"
+          python3 scripts/verify-release-asset.py \
+            --formula dist/homebrew/aura.rb \
+            --tag "$TAG" \
+            --repo '${{ github.repository }}' \
+            --expected-manifest "$EXPECTED_ASSETS_MANIFEST" \
+            --assets-manifest-out "$RUNNER_TEMP/verified-assets.txt"
+
+      - name: Resolve source release and audit URLs
+        id: source-context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          AUDIT_LOG_URL="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
+            --jq '.jobs[] | select(.name == "homebrew-audit") | .html_url' | sed -n '1p')"
+          if [ -z "$AUDIT_LOG_URL" ]; then
+            AUDIT_LOG_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
+          echo "audit_log_url=$AUDIT_LOG_URL" >> "$GITHUB_OUTPUT"
+          echo "release_url=https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Update tap pull request and seal publication
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          test -n "$HOMEBREW_TAP_TOKEN"
+          ASKPASS="$RUNNER_TEMP/git-askpass.sh"
+          cat > "$ASKPASS" <<'EOF'
+          #!/bin/sh
+          case "$1" in
+            *sername*) printf '%s\n' "x-access-token" ;;
+            *) printf '%s\n' "$HOMEBREW_TAP_TOKEN" ;;
+          esac
+          EOF
+          chmod 700 "$ASKPASS"
+          export GIT_ASKPASS="$ASKPASS"
+          export GIT_TERMINAL_PROMPT=0
+          git -c credential.helper= -c core.askPass="$ASKPASS" \
+            clone --depth 1 "https://github.com/${TAP_REPOSITORY}.git" tap
+          git -C tap config --local credential.helper ""
+          git -C tap config --local core.askPass "$ASKPASS"
+
+          TAP_DEFAULT="$(git -C tap symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')"
+          test -n "$TAP_DEFAULT"
+          PR_BRANCH="aura-${TAG}"
+          PR_CANDIDATES="$(gh pr list \
+            --repo "$TAP_REPOSITORY" \
+            --state open \
+            --head "aura-${TAG}" \
+            --base "$TAP_DEFAULT" \
+            --json number,headRefName,headRepository,isCrossRepository)"
+          EXISTING_PR="$(jq -r --arg repo "$TAP_REPOSITORY" '
+            map(select(
+              .headRepository.nameWithOwner == $repo and
+              .isCrossRepository == false
+            )) |
+            if length > 1 then
+              error("multiple open PRs for release branch")
+            elif length == 1 then
+              .[0].number
+            else
+              empty
+            end
+          ' <<< "$PR_CANDIDATES")"
+
+          if [ -n "$EXISTING_PR" ]; then
+            git -C tap fetch origin "refs/heads/${PR_BRANCH}:refs/remotes/origin/${PR_BRANCH}"
+            git -C tap checkout -B "$PR_BRANCH" "origin/${PR_BRANCH}"
+          else
+            git -C tap checkout -b "$PR_BRANCH" "origin/${TAP_DEFAULT}"
+          fi
+
+          STATUS="approved"
+          if cmp -s dist/homebrew/aura.rb tap/Formula/aura.rb; then
+            STATUS="no-op"
+          else
+            mkdir -p tap/Formula
+            cp dist/homebrew/aura.rb tap/Formula/aura.rb
+            git -C tap add Formula/aura.rb
+            git -C tap \
+              -c user.name="aura-publisher[bot]" \
+              -c user.email="41898282+aura-publisher[bot]@users.noreply.github.com" \
+              commit -qm "aura ${TAG}"
+            REMOTE_SHA="$(cd tap && git ls-remote origin "refs/heads/aura-${TAG}" | cut -f1)"
+            if [ -z "$REMOTE_SHA" ]; then
+              REMOTE_SHA=0000000000000000000000000000000000000000
+            fi
+            git -C tap push "--force-with-lease=refs/heads/aura-${TAG}:$REMOTE_SHA" \
+              origin "HEAD:refs/heads/${PR_BRANCH}"
+          fi
+
+          ASSET_SHA_LIST="$RUNNER_TEMP/asset-sha256.txt"
+          : > "$ASSET_SHA_LIST"
+          for target in \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin; do
+            asset="artifacts/aura-${target}/aura-${target}.tar.gz"
+            printf '%s %s\n' "$(basename "$asset")" "$(sha256sum "$asset" | cut -d' ' -f1)" >> "$ASSET_SHA_LIST"
+          done
+          PR_BODY="$RUNNER_TEMP/homebrew-pr-body.md"
+          python3 scripts/render-publish-pr-body.py \
+            --tag "$TAG" \
+            --verified-commit '${{ github.sha }}' \
+            --formula-sha256 "$(cat dist/homebrew/aura.rb.sha256)" \
+            --asset-sha-list "$ASSET_SHA_LIST" \
+            --release-url '${{ steps.source-context.outputs.release_url }}' \
+            --audit-log-url '${{ steps.source-context.outputs.audit_log_url }}' \
+            --tap-repository "$TAP_REPOSITORY" \
+            --out "$PR_BODY"
+
+          PR_NUMBER=0
+          PR_URL=""
+          SEALED_PR_BRANCH=""
+          if [ -n "$EXISTING_PR" ]; then
+            gh pr edit "$EXISTING_PR" \
+              --repo "$TAP_REPOSITORY" \
+              --base "$TAP_DEFAULT" \
+              --title "aura ${TAG}" \
+              --body-file "$PR_BODY"
+            PR_NUMBER="$EXISTING_PR"
+            PR_URL="$(gh pr view "$PR_NUMBER" --repo "$TAP_REPOSITORY" --json url --jq '.url')"
+            SEALED_PR_BRANCH="$PR_BRANCH"
+          elif [ "$STATUS" = "approved" ]; then
+            PR_URL="$(gh pr create \
+              --repo "$TAP_REPOSITORY" \
+              --base "$TAP_DEFAULT" \
+              --head "$PR_BRANCH" \
+              --title "aura ${TAG}" \
+              --body-file "$PR_BODY")"
+            PR_NUMBER="$(gh pr view "$PR_URL" --repo "$TAP_REPOSITORY" --json number --jq '.number')"
+            SEALED_PR_BRANCH="$PR_BRANCH"
+          fi
+
+          SEAL_ROOT=.omo/evidence/design-compliance-remediation/publish/homebrew
+          mkdir -p "$SEAL_ROOT"
+          cp "$PR_BODY" "$SEAL_ROOT/pr-body.md"
+          python3 scripts/seal-publish.py \
+            --target homebrew \
+            --pr-number "$PR_NUMBER" \
+            --pr-branch "$SEALED_PR_BRANCH" \
+            --pr-url "$PR_URL" \
+            --tap-default-branch "$TAP_DEFAULT" \
+            --status "$STATUS" \
+            --formula-sha256 "$(cat dist/homebrew/aura.rb.sha256)" \
+            --tag "$TAG" \
+            --verified-commit '${{ github.sha }}' \
+            --run-id '${{ github.run_id }}' \
+            --run-attempt '${{ github.run_attempt }}' \
+            --root "$SEAL_ROOT"
+
+      - name: Bind Homebrew receipt to content digest
+        id: seal-digest
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          receipt=.omo/evidence/design-compliance-remediation/publish/homebrew/receipt.json
+          echo "sha256=$(sha256sum "$receipt" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload content-addressed Homebrew receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aura-publish-homebrew-${{ steps.seal-digest.outputs.sha256 }}
+          path: .omo/evidence/design-compliance-remediation/publish/homebrew
           if-no-files-found: error

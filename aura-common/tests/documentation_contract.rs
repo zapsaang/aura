@@ -202,8 +202,6 @@ fn readme_documents_cli_and_daemon_flags() {
     }
 }
 
-// --- Stale-claim negative fixtures -------------------------------------------
-
 #[test]
 fn docs_have_no_stale_fixed_shm_path() {
     for text in [readme(), project(), blueprint(), adr()] {
@@ -215,10 +213,19 @@ fn docs_have_no_stale_fixed_shm_path() {
 }
 
 #[test]
-fn readme_has_no_stale_homebrew_tap_install() {
+fn readme_documents_reviewed_homebrew_tap_install() {
     let readme = readme();
-    assert!(!readme.contains("brew install zapsaang/tap/aura"));
-    assert!(!readme.contains("brew tap zapsaang/tap"));
+    for required in [
+        "brew install zapsaang/tap/aura",
+        "brew upgrade aura",
+        "draft",
+        "gh release edit $TAG --draft=false",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README must document Homebrew publication behavior: {required}"
+        );
+    }
 }
 
 #[test]

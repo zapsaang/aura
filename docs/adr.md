@@ -197,6 +197,44 @@ tested error message.
 
 ---
 
+## ADR-010: Release publication split — compliance lanes plus non-lane publish seals
+
+**Status:** locked
+
+**Context.** The release pipeline (`release.yml`) builds four platform
+artifacts and renders/audits the Homebrew formula inside compliance lanes,
+but the publish steps (uploading release assets, opening the tap pull
+request) are side effects, not verifications. The evidence-bound registry
+only admits verifiable lanes (`count_source` has no side-effect mode), and
+`run-evidence-command.py` rejects any command that mutates the worktree, so
+publish steps can never enter the registry or the lane framework.
+
+**Decision.** Publication is split in two. Verification stays in the
+existing nine compliance lanes, unchanged. The two publish jobs
+(`publish-github-release`, `publish-homebrew`) are non-lane jobs that reuse
+the non-lane seal paradigm of `seal_native_handoff`: each seals a
+`publish/{github-release,homebrew}` receipt via `PublishIdentity` /
+`seal_publish`, content-addressed like every other receipt archive. The
+tap pull request is reviewed and merged by a maintainer (the
+`zapsaang/homebrew-tap` `main` branch requires PRs with one approval,
+admins enforced); the workflow authenticates to the tap with the
+`HOMEBREW_TAP_TOKEN` Actions secret, a fine-grained PAT scoped to the tap
+repository. The tap repository is configurable through the
+`HOMEBREW_TAP_REPO` repository variable (default `zapsaang/homebrew-tap`)
+so fork dry runs can target a fork tap. Releases are always created as
+drafts, and flipping a release to published is a manual maintainer step
+(`gh release edit $TAG --draft=false`); there is no follow-up workflow in
+v1. A published release is intentionally immutable to workflow reruns:
+the publish job refuses to mutate a release whose `isDraft` is not true.
+
+**Consequences.** Publish side effects remain auditable without weakening
+the lane gate, and no new registry or execution-context machinery was
+added. Users only see a formula after maintainer review and manual release
+publication, at the cost of a manual publish step per release. Design and
+operational detail live in `docs/homebrew-publish.md`.
+
+---
+
 ## History note: Process and Storage dimensions
 
 Present in the original design, removed by `4c419fc` before the audit

@@ -200,6 +200,7 @@ fn homebrew_template_placeholders_and_binary_only() {
         "{SHA256_LINUX_ARM}",
         "{SHA256_MACOS_ARM}",
         "{SHA256_MACOS_X86}",
+        "{SOURCE_REPOSITORY}",
     ] {
         assert!(
             template.contains(placeholder),
@@ -215,10 +216,10 @@ fn homebrew_template_placeholders_and_binary_only() {
         "version is scanned from the URL; explicit version is redundant"
     );
     assert!(template.contains(
-        "https://github.com/zapsaang/aura/releases/download/{TAG}/aura-aarch64-apple-darwin.tar.gz"
+        "https://github.com/{SOURCE_REPOSITORY}/releases/download/{TAG}/aura-aarch64-apple-darwin.tar.gz"
     ));
     assert!(template.contains(
-        "https://github.com/zapsaang/aura/releases/download/{TAG}/aura-x86_64-unknown-linux-gnu.tar.gz"
+        "https://github.com/{SOURCE_REPOSITORY}/releases/download/{TAG}/aura-x86_64-unknown-linux-gnu.tar.gz"
     ));
     assert!(!template.contains("cargo"), "no source building allowed");
     assert!(!template.contains("depends_on \"rust\""));
@@ -288,9 +289,41 @@ fn homebrew_render_produces_literal_urls_and_digests() {
         "{SHA256_LINUX_ARM}",
         "{SHA256_MACOS_ARM}",
         "{SHA256_MACOS_X86}",
+        "{SOURCE_REPOSITORY}",
     ] {
         assert!(!rendered.contains(placeholder), "unresolved {placeholder}");
     }
+}
+
+#[test]
+fn homebrew_render_targets_configured_source_repository() {
+    let tempdir = tempfile::TempDir::new().expect("tempdir");
+    let out = tempdir.path().join("fork.rb");
+    let output = run_render(&[
+        "--tag",
+        VALID_TAG,
+        "--source-repository",
+        "fork-owner/aura-fork",
+        "--linux-x86",
+        VALID_SHA,
+        "--linux-arm",
+        VALID_SHA,
+        "--macos-arm",
+        VALID_SHA,
+        "--macos-x86",
+        VALID_SHA,
+        "--out",
+        out.to_str().expect("utf8 path"),
+    ]);
+    assert!(output.status.success(), "render failed: {output:?}");
+    let rendered = std::fs::read_to_string(out).expect("rendered formula");
+    assert_eq!(
+        rendered
+            .matches("https://github.com/fork-owner/aura-fork/releases/download/")
+            .count(),
+        4
+    );
+    assert!(!rendered.contains("github.com/zapsaang/aura/releases/download/"));
 }
 
 #[test]
@@ -395,8 +428,8 @@ fn release_workflow_exact_four_tar_gz_targets() {
     );
     assert_eq!(
         release.matches("actions/upload-artifact@").count(),
-        17,
-        "four archives, formula, nine lanes, and three producers"
+        21,
+        "four archives, formula, two tuples, nine lanes, three producers, and two publish receipts"
     );
     let registry = read("qa/compliance-qa-registry.json");
     assert_eq!(
@@ -459,9 +492,6 @@ fn release_workflow_homebrew_render_audit_ordering() {
     assert!(registry.contains("ruby -c dist/homebrew/aura.rb"));
     assert!(registry.contains("brew audit --strict --formula aura/audit/aura"));
     assert!(!registry.contains("brew audit --strict --formula dist/homebrew/aura.rb"));
-    assert!(!release.contains("publish-homebrew"));
-    assert!(!release.contains("gh release"));
-    assert!(!release.contains("homebrew-tap"));
 }
 
 #[test]

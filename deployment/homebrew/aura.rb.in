@@ -6,22 +6,22 @@ class Aura < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/zapsaang/aura/releases/download/{TAG}/aura-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/{SOURCE_REPOSITORY}/releases/download/{TAG}/aura-aarch64-apple-darwin.tar.gz"
       sha256 "{SHA256_MACOS_ARM}"
     end
     on_intel do
-      url "https://github.com/zapsaang/aura/releases/download/{TAG}/aura-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/{SOURCE_REPOSITORY}/releases/download/{TAG}/aura-x86_64-apple-darwin.tar.gz"
       sha256 "{SHA256_MACOS_X86}"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/zapsaang/aura/releases/download/{TAG}/aura-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/{SOURCE_REPOSITORY}/releases/download/{TAG}/aura-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "{SHA256_LINUX_ARM}"
     end
     on_intel do
-      url "https://github.com/zapsaang/aura/releases/download/{TAG}/aura-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/{SOURCE_REPOSITORY}/releases/download/{TAG}/aura-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "{SHA256_LINUX_X86}"
     end
   end
