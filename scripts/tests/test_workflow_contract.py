@@ -154,10 +154,10 @@ class WorkflowContractTests(unittest.TestCase):
         body = _workflow_job(workflow, "publish-homebrew")
 
         self.assertIn("${{ vars.HOMEBREW_TAP_REPO || 'zapsaang/homebrew-tap' }}", body)
-        self.assertIn("AURA_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}", body)
+        self.assertNotIn("AURA_RELEASE_TOKEN", body)
         self.assertIn("HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}", body)
         self.assertNotIn("HOMEBREW_TAP_PUBLISH_TOKEN", body)
-        self.assertIn("--repo '${{ github.repository }}'", body)
+        self.assertNotIn("python3 scripts/verify-release-asset.py", body)
         self.assertIn("GIT_ASKPASS", body)
         self.assertIn("credential.helper=", body)
         self.assertIn("symbolic-ref refs/remotes/origin/HEAD", body)
