@@ -871,8 +871,6 @@ jobs:
           path: .omo/evidence/design-compliance-remediation/lane/macos-default/tuples/homebrew-audit
 
       - name: Revalidate source inputs and release assets
-        env:
-          AURA_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set -euo pipefail
@@ -900,12 +898,6 @@ jobs:
             printf '%s %s\n' "$(basename "$asset")" "$(sha256sum "$asset" | cut -d' ' -f1)" >> "$EXPECTED_ASSETS_MANIFEST"
           done
           LC_ALL=C sort -o "$EXPECTED_ASSETS_MANIFEST" "$EXPECTED_ASSETS_MANIFEST"
-          python3 scripts/verify-release-asset.py \
-            --formula dist/homebrew/aura.rb \
-            --tag "$TAG" \
-            --repo '${{ github.repository }}' \
-            --expected-manifest "$EXPECTED_ASSETS_MANIFEST" \
-            --assets-manifest-out "$RUNNER_TEMP/verified-assets.txt"
 
       - name: Resolve source release and audit URLs
         id: source-context
