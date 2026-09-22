@@ -212,6 +212,27 @@ def main() -> int:
                 if output_format == "json":
                     json.loads(result.stdout)
                 contract_rows.append(row)
+        for color in COLORS:
+            result = _run_cli(
+                cli_bin,
+                state,
+                ["--format", "raw", "-m", "cpu", "--color", color],
+            )
+            row = {
+                "format": "raw",
+                "color": color,
+                "exit": result.returncode,
+                "stderr_empty": result.stderr == b"",
+            }
+            if result.returncode != 0 or result.stderr != b"":
+                raise SmokeError(f"cli raw contract failed: {row!r}")
+            lines = result.stdout.splitlines()
+            if len(lines) != 1 or not lines[0]:
+                raise SmokeError(
+                    f"cli raw contract failed: expected one non-empty line,"
+                    f" got {result.stdout!r}"
+                )
+            contract_rows.append(row)
         _write(
             args.evidence,
             "cli-contract.json",

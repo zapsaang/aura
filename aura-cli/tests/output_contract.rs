@@ -434,6 +434,13 @@ fn format_rejects_uppercase() {
     assert!(Args::try_parse_from(["aura-cli", "--format", "JSON"]).is_err());
 }
 
+// Green baseline per the raw-format plan: clap's case-sensitive parser already
+// rejects `Raw`, so this is a parser regression guard, not a red-first test.
+#[test]
+fn format_rejects_uppercase_raw() {
+    assert!(Args::try_parse_from(["aura-cli", "--format", "Raw"]).is_err());
+}
+
 // ------------------------------------------------------------ human cpu ---
 
 #[test]
@@ -1589,4 +1596,187 @@ fn binary_alias_module_accepted() {
 
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8(out.stdout).unwrap().starts_with("META\n"));
+}
+
+// ------------------------------------------------------------------- raw ---
+
+fn run_binary_raw(module: &str, t: &TelemetryArchive, tag: &str) -> std::process::Output {
+    let dir = temp_shm_dir(tag);
+    let shm = dir.join("state.dat");
+    let mut snapshot = *t;
+    snapshot.meta.timestamp_ns = monotonic_ns();
+    write_shm(&shm, &snapshot);
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_aura-cli"))
+        .args(["--format", "raw", "-m", module, "--shm-path"])
+        .arg(&shm)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    out
+}
+
+fn assert_raw_exact(module: &str, t: &TelemetryArchive, tag: &str, expected_row: &str) {
+    let out = run_binary_raw(module, t, tag);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{tag}: exit; stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty(), "{tag}: stderr must stay empty");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        format!("{expected_row}\n"),
+        "{tag}: exact stdout with one trailing newline"
+    );
+}
+
+type RawCase = (&'static str, fn() -> TelemetryArchive, &'static str);
+type RawNaCase = (&'static str, &'static str, fn() -> TelemetryArchive);
+
+#[test]
+fn raw_binary_supported_all_modules_exact() {
+    let cases: [RawCase; 8] = [
+        ("cpu", cpu_archive, "42.0%"),
+        ("process", process_reader_archive, "50.0%"),
+        ("mem", memory_archive, "50.0%"),
+        ("swap", memory_archive, "50.0%"),
+        ("disk", storage_archive, "read=1.5KB/s,write=2.0MB/s"),
+        ("net", network_archive, "rx=1.5KB/s,tx=2.5KB/s"),
+        ("os", meta_archive, "\u{f31b}"),
+        ("gpu", gpu_archive, "55.5%"),
+    ];
+    for (module, build, expected_row) in cases {
+        assert_raw_exact(module, &build(), &format!("raw-ok-{module}"), expected_row);
+    }
+}
+
+// The binary path runs full archive validation, so every raw fixture must be
+// reader-valid: capability-gated fields are zeroed when their owner bit is
+// clear, and CAP_PROCESS_TOP_CPU requires CAP_CPU_GLOBAL with core_count >= 1.
+
+fn process_reader_archive() -> TelemetryArchive {
+    let mut t = process_archive();
+    let cpu = cpu_archive();
+    t.capabilities |= cpu.capabilities;
+    t.cpu = cpu.cpu;
+    for record in t.process.top_mem.iter_mut() {
+        record.cpu_usage = 0.0;
+    }
+    t
+}
+
+fn mem_total_only_archive() -> TelemetryArchive {
+    let mut t = archive(CAP_MEMORY_RAM_TOTAL);
+    t.memory.ram_total = 16_000_000_000;
+    t
+}
+
+fn swap_cap_clear_archive() -> TelemetryArchive {
+    let mut t = memory_archive();
+    t.capabilities &= !CAP_MEMORY_SWAP;
+    t.memory.swap_total = 0;
+    t.memory.swap_free = 0;
+    t.memory.swap_used = 0;
+    t.derived.swap_used_percent = 0.0;
+    t.derived.swap_tone = 0;
+    t
+}
+
+fn disk_bytes_only_archive() -> TelemetryArchive {
+    let mut t = archive(CAP_STORAGE_DISK_BYTES);
+    let mut disk = storage_archive().storage.disks[0];
+    disk.read_bytes_per_sec = 0.0;
+    disk.write_bytes_per_sec = 0.0;
+    disk.read_iops = 0.0;
+    disk.write_iops = 0.0;
+    disk.queue_depth = 0;
+    disk.read_latency_ms = 0.0;
+    disk.write_latency_ms = 0.0;
+    t.storage.disks[0] = disk;
+    t.storage.disk_count = 1;
+    t
+}
+
+fn disk_empty_archive() -> TelemetryArchive {
+    let mut t = storage_archive();
+    t.storage.disk_count = 0;
+    for disk in t.storage.disks.iter_mut() {
+        // SAFETY: `DiskStat` is `Zeroable`; the all-zero bit pattern is valid.
+        *disk = unsafe { std::mem::zeroed() };
+    }
+    t
+}
+
+fn net_bytes_only_archive() -> TelemetryArchive {
+    let mut t = archive(CAP_NETWORK_BYTES);
+    let mut iface = network_archive().network.interfaces[0];
+    iface.rx_bytes_per_sec = 0.0;
+    iface.tx_bytes_per_sec = 0.0;
+    t.network.interfaces[0] = iface;
+    t.network.if_count = 1;
+    t
+}
+
+fn net_empty_archive() -> TelemetryArchive {
+    let mut t = network_archive();
+    t.network.if_count = 0;
+    for iface in t.network.interfaces.iter_mut() {
+        *iface = NetIfStat::new();
+    }
+    t
+}
+
+fn os_identity_clear_archive() -> TelemetryArchive {
+    let mut t = meta_archive();
+    t.capabilities &= !CAP_META_OS_IDENTITY;
+    t.meta.os.os_type = FixedString16::new();
+    t.meta.os.os_id = FixedString16::new();
+    t.meta.os.os_pretty_name = [0; 128];
+    t
+}
+
+fn gpu_util_clear_archive() -> TelemetryArchive {
+    let mut t = gpu_archive();
+    t.gpu.gpus[0].capabilities &= !GPU_CAP_UTILIZATION;
+    t.gpu.gpus[0].utilization_percent = 0.0;
+    t
+}
+
+fn gpu_empty_archive() -> TelemetryArchive {
+    let mut t = gpu_archive();
+    t.gpu.gpu_count = 0;
+    for gpu in t.gpu.gpus.iter_mut() {
+        // SAFETY: `GpuStat` is `Zeroable`; the all-zero bit pattern is valid.
+        *gpu = unsafe { std::mem::zeroed() };
+    }
+    t
+}
+
+#[test]
+fn raw_binary_unsupported_is_na() {
+    let cases: [RawNaCase; 13] = [
+        ("cpu", "cpu-cap", || archive(0)),
+        ("process", "process-cap", || archive(0)),
+        ("process", "process-empty", || {
+            let mut t = process_reader_archive();
+            t.process.top_cpu_count = 0;
+            t
+        }),
+        ("mem", "mem-used-clear", mem_total_only_archive),
+        ("swap", "swap-cap", swap_cap_clear_archive),
+        ("disk", "disk-rates-clear", disk_bytes_only_archive),
+        ("disk", "disk-empty", disk_empty_archive),
+        ("net", "net-rates-clear", net_bytes_only_archive),
+        ("net", "net-empty", net_empty_archive),
+        ("os", "os-identity-clear", os_identity_clear_archive),
+        ("gpu", "gpu-enum-clear", || archive(0)),
+        ("gpu", "gpu-util-clear", gpu_util_clear_archive),
+        ("gpu", "gpu-empty", gpu_empty_archive),
+    ];
+    for (module, tag, build) in cases {
+        assert_raw_exact(module, &build(), &format!("raw-na-{tag}"), "N/A");
+    }
 }

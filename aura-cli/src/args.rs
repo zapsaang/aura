@@ -54,4 +54,5 @@ pub enum OutputFormat {
     Human,
     Json,
     Value,
+    Raw,
 }

@@ -52,6 +52,9 @@ pub enum AuraError {
 
     #[error("fatal runtime error: {0}")]
     Fatal(String),
+
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
 }
 
 pub type AuraResult<T> = Result<T, AuraError>;

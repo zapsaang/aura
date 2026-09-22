@@ -597,6 +597,27 @@ fn binary_valid_fresh_state_exit_zero() {
 }
 
 // ---------------------------------------------------------------------
+// Raw format rejects `all` before any shared-memory access
+// ---------------------------------------------------------------------
+
+#[test]
+fn raw_binary_all_module_rejected_before_shm() {
+    for args in [
+        &["--format", "raw"][..],
+        &["--format", "raw", "-m", "all"][..],
+    ] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_aura-cli"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert_error_line(
+            &out,
+            "invalid argument: --format raw requires a single module (got --module all)",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------
 // Rendered-line goldens for reasons the CLI cannot trigger unprivileged
 // ---------------------------------------------------------------------
 

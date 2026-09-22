@@ -68,6 +68,7 @@ aura-cli -m all       # All modules
 aura-cli --format human  # Human-readable lines
 aura-cli --format json   # Structured JSON
 aura-cli --format value  # key=value tokens
+aura-cli --format raw -m cpu  # Bare value; requires a single module, not all
 
 # Color mode (--color, default: ansi)
 aura-cli --color ansi    # ANSI colors

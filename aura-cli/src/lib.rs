@@ -7,10 +7,16 @@ use std::time::Duration;
 
 use aura_common::{AuraError, AuraResult, OFFLINE_THRESHOLD_SECS};
 
-use args::{Args, OutputFormat};
+use args::{Args, Module, OutputFormat};
 use reader::TelemetryReader;
 
 pub fn run(args: Args) -> AuraResult<String> {
+    if args.format == OutputFormat::Raw && args.module == Module::All {
+        return Err(AuraError::InvalidArgument(
+            "--format raw requires a single module (got --module all)".to_string(),
+        ));
+    }
+
     let reader = match &args.shm_path {
         Some(path) => TelemetryReader::new(path)?,
         None => TelemetryReader::new_default()?,
@@ -29,6 +35,7 @@ pub fn run(args: Args) -> AuraResult<String> {
         OutputFormat::Human => output::render(args.module, args.color, &telemetry),
         OutputFormat::Json => format::json::render(args.module, &telemetry)?,
         OutputFormat::Value => output::value::render(args.module, &telemetry),
+        OutputFormat::Raw => output::value::render_raw(args.module, &telemetry)?,
     };
 
     Ok(rendered)
